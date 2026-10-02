@@ -33,7 +33,7 @@ Unmatched items go to an inbox and are assigned by hand once. The assignment bec
 
 | Component | Runs on | Purpose |
 | --- | --- | --- |
-| Server | Proxmox host, own LXC container, Docker Compose | API, database, web view, job queue |
+| Server | Proxmox host, own LXC container, plain service without Docker | API, database, web view, job queue |
 | Collector | Every machine | Sends sessions and the repository and worktree inventory to the server |
 | Runner | Machines that can do the work (desktop first) | Executes queued jobs with Claude Code, holds the machine awake while jobs run |
 | MCP server | Part of the server | Gives agents the project context and takes handoffs |
@@ -103,7 +103,7 @@ Conditions:
 
 - Level 3 needs an automated check per repository (build and tests). Without one, the result needs manual verification.
 - Runs use the rate limits of the account that executes them.
-- Jobs that need Windows, Godot, or a full Shopware stack run on the desktop, not on the i5 server.
+- Jobs run on the desktop, not on the Proxmox host. The host is too small for builds.
 
 ## Decision queue
 
@@ -125,17 +125,44 @@ A switch per project or topic lets two agents pass results back and forth, for e
 - Cowork side: Cowork fetches and files messages through the MCP server. It needs a trigger, because nothing can write into a Cowork chat from outside.
 - Open: direct messaging between Claude sessions exists as a tool. It is untested for this purpose.
 
+## Rule sets
+
+One place for all instructions, grouped by purpose and delivered per project, role, or task. The aim is that each session loads few and relevant rules, not all of them.
+
+- Import, read-only: the collector reports the instruction sources per machine, account, and repository: `CLAUDE.md` files, `.claude/rules/`, skills, and subagents. The hub lists them and marks copies that have drifted apart.
+- Group: rule sets by purpose, assigned to a workspace, class, or project. An assignment applies to everything below it.
+- Deliver through the mechanisms that Claude Code already has:
+  - By project: files in `.claude/rules/`, optionally limited to matching files with `paths:`.
+  - By role: subagent definitions that preload the skills of that role.
+  - By task: skills. Claude loads a skill when its description matches the task, so no own classifier is needed.
+- Distribute: a private Git repository as a plugin marketplace. The same plugin installs in Claude Code and in Cowork.
+- The hub writes only into folders that it owns and never edits hand-written files.
+
+## Roadmap per project
+
+Projects that are marked as deep get a roadmap. Loose chats and small projects stay without one.
+
+- A roadmap has milestones and items. Each item has acceptance criteria, dependencies, and a status.
+- Agents take work through the MCP server. An agent claims the next free item, so two agents never take the same one. The result is a pull request that links back to the item.
+- Where a tracker exists, such as Jira or GitHub issues, the item links to the ticket. The hub does not replace the tracker.
+- Open: whether the roadmap lives in the hub database or as a file in the repository that the hub reads.
+
 ## Phases
 
 1. Built: server, collector for Claude Code sessions, worktree inventory, "Now" page, hierarchy view, rules, inbox.
-2. Proposed next: MCP server with the decision queue, handoffs, and the review loop, and a `SessionStart` hook that loads the project briefing.
+   Also built: the read-only import of instruction files with the "Rules" page.
+2. MCP server with the decision queue, handoffs, and the review loop, and a `SessionStart` hook that loads the project briefing.
 3. Summaries, to-dos, and next steps per session and project. End-of-day summary.
-4. More sources: desktop app sessions, claude.ai export, artifacts.
-5. Runner and automation levels 1 to 3, with a limit on parallel work.
+4. Rule sets: grouping by purpose, assignment, and distribution.
+5. Roadmap per project, served to agents through the MCP server.
+6. More sources: desktop app sessions, claude.ai export, artifacts.
+7. Runner and automation levels 1 to 3, with a limit on parallel work.
+
+Rule sets are chosen as the next step. The order of the other phases is open.
 
 ## Decisions
 
-- Hub runs on the existing Proxmox host. No hardware purchase for the hub.
+- Hub runs on the existing Proxmox host as a plain service in its own container. The host has an i5-6600K, 8 GB of memory, and one 120 GB SSD, so Docker and agent sessions do not go there. No hardware purchase for the hub.
 - Summaries use a hosted model. The i5 host has no GPU.
 - No own file sync. Git for code, Syncthing for the rest.
 - No local model for code search for now. A local embedding index as an MCP tool is the better option if token use for exploring becomes a problem.
@@ -143,7 +170,6 @@ A switch per project or topic lets two agents pass results back and forth, for e
 
 ## Open points
 
-- Free disk space on the Proxmox host (256 GB total).
 - API key for summaries, or another model source.
 - Whether the Orbis repository has an automated check that level 3 can rely on.
 - Terms for a second account held by the same person. The consumer terms forbid sharing an account. A statement on one person with two accounts was not found.

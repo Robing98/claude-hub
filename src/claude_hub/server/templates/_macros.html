@@ -45,3 +45,11 @@
   {% endfor %}
 </select>
 {% endmacro %}
+
+{% macro rule_where(f) %}
+  {%- if f.scope == "user" -%}
+    User level, account {{ f.account or "default" }}
+  {%- elif f.project_id -%}
+    <a href="/projects/{{ f.project_id }}">{{ f.project_name }}</a>
+  {%- endif %} <span class="sub">on {{ f.machine }}</span>
+{% endmacro %}

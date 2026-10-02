@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% set active = "rules" %}
+{% block title %}Rules · Claude hub{% endblock %}
+{% block main %}
+<h1>Rules</h1>
+<p class="lead">Instruction files from all machines: {{ counts.values() | sum }} files with {{ total_items }} single rules.
+  {% if drifted %}{{ drifted }} files in this list differ from a copy with the same name.{% endif %}</p>
+
+<form method="get" action="/rules" class="inline toolbar">
+  {% if kind %}<input type="hidden" name="kind" value="{{ kind }}">{% endif %}
+  <input type="search" name="q" value="{{ q }}" placeholder="Text in a rule" aria-label="Search rules">
+  <button type="submit">Search</button>
+</form>
+<p class="filters">
+  <a href="/rules"{% if not kind %} class="on"{% endif %}>All</a>
+  {% for key, label in kind_labels.items() if counts[key] %}
+  <a href="/rules?kind={{ key }}"{% if kind == key %} class="on"{% endif %}>{{ label }} <span class="count">{{ counts[key] }}</span></a>
+  {% endfor %}
+</p>
+
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Kind</th><th>Name</th><th>Where</th><th class="num">Rules</th><th>Copies</th><th>Changed</th></tr></thead>
+  <tbody>
+  {% for f in files %}
+    <tr>
+      <td class="nowrap">{{ kind_labels.get(f.kind, f.kind) }}</td>
+      <td><a href="/rules/{{ f.id }}">{{ f.name }}</a>
+          <div class="sub">{{ f.rel_path }}{% if f.applies_to %} · applies to {{ f.applies_to }}{% endif %}</div>
+          {% if f.description %}<div class="sub">{{ f.description | truncate(160) }}</div>{% endif %}</td>
+      <td>{{ m.rule_where(f) }}</td>
+      <td class="num">{{ f.rule_count }}</td>
+      <td>
+        {% if f.differing %}<span class="pill dirty">{{ f.differing }} differ</span>{% endif %}
+        {% if f.identical %}<span class="pill merged">{{ f.identical }} identical</span>{% endif %}
+      </td>
+      <td class="nowrap" title="{{ f.modified_at or '' }}">{{ f.modified_at | reltime }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="6" class="empty">No instruction files. Run the collector to import them.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="hint">Copies are files of the same kind and name in another place. "Differ" means that the text is not the same. Each CLAUDE.md is compared rule by rule on its own page.</p>
+{% endblock %}

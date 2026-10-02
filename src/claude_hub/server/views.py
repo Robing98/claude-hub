@@ -341,6 +341,84 @@ def settings_page(request: Request, conn: sqlite3.Connection = Depends(get_conn)
                   machines=machines, accounts=accounts, targets=targets(conn))
 
 
+KIND_LABELS = {
+    "claude_md": "CLAUDE.md",
+    "rule": "Rule file",
+    "skill": "Skill",
+    "agent": "Subagent",
+    "command": "Command",
+    "output_style": "Output style",
+}
+templates.env.globals["kind_labels"] = KIND_LABELS
+
+
+def load_rule_files(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """SELECT f.id, f.scope, f.kind, f.name, f.rel_path, f.base_path, f.description,
+                  f.applies_to, f.sha, f.bytes, f.modified_at, f.project_id, f.machine_id,
+                  m.name AS machine, a.label AS account, p.name AS project_name,
+                  (SELECT COUNT(*) FROM rule_items i WHERE i.file_id = f.id) AS rule_count
+           FROM rule_files f
+           JOIN machines m ON m.id = f.machine_id
+           LEFT JOIN accounts a ON a.id = f.account_id
+           LEFT JOIN projects p ON p.id = f.project_id"""
+    ).fetchall()
+    files = [dict(row) for row in rows]
+    # Files with the same kind and name are copies of one another. Every
+    # CLAUDE.md shares its name, so those are compared rule by rule instead.
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for item in files:
+        if item["kind"] != "claude_md":
+            groups.setdefault((item["kind"], item["name"].lower()), []).append(item)
+    for item in files:
+        others = [o for o in groups.get((item["kind"], item["name"].lower()), []) if o is not item]
+        item["identical"] = sum(o["sha"] == item["sha"] for o in others)
+        item["differing"] = len(others) - item["identical"]
+    files.sort(key=lambda f: (f["scope"] != "user", (f["project_name"] or "").lower(),
+                              f["kind"], f["name"].lower()))
+    return files
+
+
+@router.get("/rules")
+def rules_page(request: Request, kind: str = "", project: int = 0, q: str = "",
+               conn: sqlite3.Connection = Depends(get_conn)):
+    files = load_rule_files(conn)
+    counts = Counter(item["kind"] for item in files)
+    total_items = sum(item["rule_count"] for item in files)
+    if kind:
+        files = [item for item in files if item["kind"] == kind]
+    if project:
+        files = [item for item in files if item["project_id"] == project]
+    if q.strip():
+        like = f"%{q.strip()}%"
+        hits = {row["id"] for row in conn.execute(
+            "SELECT id FROM rule_files WHERE content LIKE ? OR name LIKE ?", (like, like))}
+        files = [item for item in files if item["id"] in hits]
+    drifted = sum(1 for item in files if item["differing"])
+    return render(request, conn, "rules.html", files=files, counts=counts, kind=kind, q=q,
+                  project=project, total_items=total_items, drifted=drifted)
+
+
+@router.get("/rules/{file_id}")
+def rule_file_page(file_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    files = load_rule_files(conn)
+    current = next((item for item in files if item["id"] == file_id), None)
+    if current is None:
+        raise HTTPException(404, "Unknown instruction file")
+    copies = [item for item in files if item is not current and item["kind"] != "claude_md"
+              and (item["kind"], item["name"].lower()) == (current["kind"], current["name"].lower())]
+    by_id = {item["id"]: item for item in files}
+    items = [dict(row) for row in conn.execute(
+        "SELECT * FROM rule_items WHERE file_id = ? ORDER BY position", (file_id,))]
+    for item in items:
+        # The same rule text in other files, found by its normalized hash.
+        twins = conn.execute(
+            "SELECT DISTINCT file_id FROM rule_items WHERE sha = ? AND file_id != ?",
+            (item["sha"], file_id)).fetchall()
+        item["also_in"] = [by_id[row["file_id"]] for row in twins if row["file_id"] in by_id]
+    return render(request, conn, "rule_file.html", file=current, copies=copies, items=items)
+
+
 # --- forms -----------------------------------------------------------------
 
 

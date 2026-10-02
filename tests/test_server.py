@@ -168,9 +168,10 @@ def test_pages_render(client, data_dir):
     client.post("/projects/1/assign", data={"target": "1"})
 
     for path in ("/", "/overview", "/inbox", "/worktrees", "/worktrees?state=dirty", "/sessions",
-                 "/sessions?q=caves", "/settings", "/projects/1", "/sessions/1", "/healthz"):
+                 "/sessions?q=caves", "/settings", "/projects/1", "/sessions/1", "/rules", "/healthz"):
         response = client.get(path)
         assert response.status_code == 200, path
+        assert "built-in method" not in response.text and "bound method" not in response.text, path
 
     project = client.get("/projects/1").text
     assert "caves" in project and "dirty" in project and "Title of s1" in project
@@ -227,4 +228,60 @@ def test_migrations_run_once(tmp_path):
     db.init(tmp_path)
     conn = db.connect(tmp_path)
     assert conn.execute("PRAGMA user_version").fetchone()[0] == len(db.MIGRATIONS)
+    conn.close()
+
+
+RULES = {"sources": [
+    {"scope": "user", "account": "max-1", "base_path": "C:\\Users\\robin\\.claude", "files": [
+        {"rel_path": "CLAUDE.md", "kind": "claude_md", "content": "# Commits\nNo attribution.\n# Style\nShort."},
+        {"rel_path": "skills/qa-run/SKILL.md", "kind": "skill",
+         "content": "---\nname: qa-run\ndescription: Manual QA rounds\n---\nPlan, test, <b>report</b>."},
+    ]},
+    {"scope": "project", "base_path": "D:\\dev\\orbis", "remote": "github.com/robing98/orbis", "files": [
+        {"rel_path": "CLAUDE.md", "kind": "claude_md", "content": "# Commits\nNo  attribution.\n# Godot\nUse C#."},
+        {"rel_path": ".claude/skills/qa-run/SKILL.md", "kind": "skill",
+         "content": "---\nname: qa-run\n---\nPlan and test only."},
+    ]},
+]}
+
+
+def test_rules_import_and_pages(client, data_dir):
+    assert client.put("/api/v1/rules", json=RULES).json() == {"files": 4, "items": 6}
+    # A second report replaces the first.
+    assert client.put("/api/v1/rules", json=RULES).json() == {"files": 4, "items": 6}
+    assert one(data_dir, "SELECT COUNT(*) AS n FROM rule_files")["n"] == 4
+    skill = one(data_dir, "SELECT * FROM rule_files WHERE kind = 'skill' AND scope = 'user'")
+    assert (skill["name"], skill["description"]) == ("qa-run", "Manual QA rounds")
+    project = one(data_dir, "SELECT p.key FROM rule_files f JOIN projects p ON p.id = f.project_id LIMIT 1")
+    assert project["key"] == "git:github.com/robing98/orbis"
+
+    listing = client.get("/rules").text
+    assert "4 files with 6 single rules" in listing and "1 differ" in listing
+    # A template that reads a dict key named like a dict method prints the method.
+    assert "built-in method" not in listing and '<td class="num">2</td>' in listing
+    assert "1 differ" not in client.get("/rules?kind=claude_md").text
+    assert "Godot" not in client.get("/rules?q=attribution").text  # search lists files, not text
+
+    page = client.get(f"/rules/{skill['id']}").text
+    assert "differs" in page and "&lt;b&gt;report&lt;/b&gt;" in page
+    user_md = one(data_dir, "SELECT id FROM rule_files WHERE kind = 'claude_md' AND scope = 'user'")["id"]
+    page = client.get(f"/rules/{user_md}").text
+    # "Commits" has the same text in the project file, apart from spacing.
+    assert page.count("Same text in:") == 1 and "orbis / CLAUDE.md" in page
+    assert client.get("/rules/999").status_code == 404
+    assert client.put("/api/v1/rules", json={"sources": [{"scope": "odd", "base_path": "x"}]}).status_code == 400
+
+
+def test_existing_database_gets_new_tables(tmp_path):
+    # A database created by the first release has only the first migration.
+    conn = db.connect(tmp_path)
+    conn.executescript(db.MIGRATIONS[0])
+    conn.execute("PRAGMA user_version = 1")
+    conn.execute("INSERT INTO users (name) VALUES ('kept')")
+    conn.commit()
+    conn.close()
+    db.init(tmp_path)
+    conn = db.connect(tmp_path)
+    assert conn.execute("SELECT name FROM users").fetchone()[0] == "kept"
+    assert conn.execute("SELECT COUNT(*) FROM rule_files").fetchone()[0] == 0
     conn.close()

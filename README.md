@@ -10,6 +10,7 @@ Status: phase 1. See [the plan](docs/plan.md) for the goal, the design, and the 
 - **Hierarchy:** workspace > class > project. Rules assign projects by Git host and owner, or by path. Unmatched projects go to the inbox.
 - **Sessions:** every Claude Code transcript, stored in full and readable in the browser.
 - **Worktrees:** one state per worktree: `dirty`, `unpushed`, `missing`, `stale`, `merged`, `idle`, `active`, or `main`.
+- **Rules:** every instruction file that Claude Code loads, from all machines: `CLAUDE.md`, `.claude/rules/`, skills, subagents, commands, and output styles. `CLAUDE.md` and rule files are split into single rules by heading. Copies that differ are marked.
 - **Several machines and accounts:** one collector per machine, one entry per Claude Code configuration directory.
 
 ## How it works
@@ -21,32 +22,25 @@ Status: phase 1. See [the plan](docs/plan.md) for the goal, the design, and the 
 
 - The collector needs Python 3.10 or later and Git. On Python 3.11 or later it has no other dependencies.
 - The collector is read-only. It never fetches, commits, or pushes, and it takes no Git locks.
+- From the Claude Code configuration directory, the collector reads only transcripts and Markdown instruction files. It never opens settings or credential files.
 - A project is identified by its normalized remote URL, for example `github.com/owner/name`. The same repository on two machines is one project. Credentials in a remote URL are removed before anything is sent.
 - Uploads are incremental. The collector asks the server what it holds and sends only new lines.
 
 ## Set up the server
 
-Prerequisite: Docker with the Compose plugin.
+**On Proxmox (recommended):** see [Deploy on Proxmox](docs/deploy-proxmox.md). The hub runs as a plain service in its own container, and one command from Windows installs or updates it.
 
-1. Clone the repository on the server.
-2. Optional: to protect the web view with a password, copy `.env.example` to `.env` and set `HUB_UI_PASSWORD`.
-3. Start the server:
+**On any machine with Python:**
 
-   ```bash
-   docker compose up -d --build
-   ```
+```bash
+python -m pip install ".[server]"
+claude-hub token add MACHINE --user USER
+claude-hub serve --host 0.0.0.0
+```
 
-4. Create a token for each machine. The token is shown only once:
+Replace `MACHINE` with a name for the machine that runs a collector, for example `desktop`, and `USER` with your name. The token is shown only once. Then open `http://SERVER:8787/settings`, where `SERVER` is the address of the server, and create your workspaces, classes, and rules.
 
-   ```bash
-   docker compose exec hub claude-hub token add MACHINE --user USER
-   ```
-
-   Replace `MACHINE` with a name for the machine, for example `desktop`, and `USER` with your name.
-
-5. Open `http://SERVER:8787/settings`, where `SERVER` is the address of the server. Create your workspaces, classes, and rules.
-
-To run the server without Docker, install it with `pip install ".[server]"` and run `claude-hub serve --host 0.0.0.0`.
+**With Docker:** `docker compose up -d --build`, then `docker compose exec hub claude-hub token add MACHINE --user USER`. The image build is not verified yet.
 
 ## Set up a collector
 

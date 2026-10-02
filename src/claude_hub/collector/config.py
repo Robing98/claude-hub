@@ -78,7 +78,10 @@ def load(path: Path) -> Config:
     if not server_url.startswith(("http://", "https://")):
         raise ConfigError("server_url must start with http:// or https://")
     if not token or token == "PASTE_TOKEN_HERE":
-        raise ConfigError("Set `token` in the configuration or CLAUDE_HUB_TOKEN in the environment.")
+        raise ConfigError(
+            f"No token in {path}. Create one on the server with `claude-hub token add MACHINE`, "
+            "then replace PASTE_TOKEN_HERE in that file with it."
+        )
 
     accounts = [
         Account(str(item.get("label", "default")), Path(str(item["config_dir"])).expanduser())

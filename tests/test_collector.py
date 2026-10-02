@@ -126,10 +126,21 @@ def test_end_to_end(repo: Path, tmp_path: Path, live_server: str, data_dir: Path
     sub.mkdir(parents=True)
     (sub / "agent-1.jsonl").write_bytes(to_jsonl(lines[:2]))
 
+    (config_dir / "CLAUDE.md").write_text("# Personal\nKeep answers short.\n")
+    (repo / "CLAUDE.md").write_text("# Build\nRun the gate.\n# Tests\nUse pytest.\n")
+
     cfg = Config(server_url=live_server, token=TOKEN,
                  accounts=[Account("max-1", config_dir), Account("max-2", tmp_path / "absent")],
                  chunk_bytes=200)   # Small chunks force several requests per file.
     run_once(cfg)
+
+    conn = db.connect(data_dir)
+    rule_files = conn.execute(
+        "SELECT f.scope, f.rel_path, p.key, (SELECT COUNT(*) FROM rule_items i WHERE i.file_id = f.id) "
+        "FROM rule_files f LEFT JOIN projects p ON p.id = f.project_id ORDER BY f.scope").fetchall()
+    conn.close()
+    assert [tuple(row) for row in rule_files] == [
+        ("project", "CLAUDE.md", "git:github.com/example/demo", 2), ("user", "CLAUDE.md", None, 1)]
 
     conn = db.connect(data_dir)
     session = conn.execute("SELECT s.*, p.key FROM sessions s JOIN projects p ON p.id = s.project_id").fetchone()

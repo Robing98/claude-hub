@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% set active = "rules" %}
+{% block title %}{{ file.name }} · Claude hub{% endblock %}
+{% block main %}
+<p class="crumbs"><a href="/rules">Rules</a> / {{ kind_labels.get(file.kind, file.kind) }}</p>
+<h1>{{ file.name }}</h1>
+<p class="sub">{{ m.rule_where(file) }} · <span class="mono">{{ file.base_path }}/{{ file.rel_path }}</span></p>
+{% if file.description %}<p class="lead">{{ file.description }}</p>{% endif %}
+{% if file.applies_to %}<p class="hint">Applies to: <span class="mono">{{ file.applies_to }}</span></p>{% endif %}
+
+{% if copies %}
+<section>
+  <h2>Copies <span class="count">{{ copies | length }}</span></h2>
+  <ul class="plain box">
+    {% for c in copies %}
+    <li><span><a href="/rules/{{ c.id }}">{{ c.rel_path }}</a> {{ m.rule_where(c) }}</span>
+        {% if c.sha == file.sha %}<span class="pill merged">identical</span>{% else %}<span class="pill dirty">differs</span>{% endif %}</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<section>
+  <h2>Rules <span class="count">{{ items | length }}</span></h2>
+  <div class="turns">
+  {% for item in items %}
+    <article class="turn">
+      {% if item.heading %}<h2>{{ item.heading }}</h2>{% endif %}
+      <div class="text">{{ item.content }}</div>
+      {% if item.also_in %}
+      <p class="hint">Same text in:
+        {% for other in item.also_in %}<a href="/rules/{{ other.id }}">{{ other.project_name or "user level" }} / {{ other.rel_path }}</a>{% if not loop.last %}, {% endif %}{% endfor %}
+      </p>
+      {% endif %}
+    </article>
+  {% else %}
+    <p class="empty">The file is empty.</p>
+  {% endfor %}
+  </div>
+</section>
+{% endblock %}

@@ -149,7 +149,40 @@ def connect(data_dir: Path) -> sqlite3.Connection:
 
 # Schema changes are appended here as new entries. Entries that have shipped
 # are never edited, because existing databases have already applied them.
-MIGRATIONS = [SCHEMA]
+RULES_SCHEMA = """
+CREATE TABLE rule_files (
+    id INTEGER PRIMARY KEY,
+    machine_id INTEGER NOT NULL REFERENCES machines(id) ON DELETE CASCADE,
+    scope TEXT NOT NULL,
+    account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
+    project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+    base_path TEXT NOT NULL,
+    rel_path TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT,
+    applies_to TEXT,
+    content TEXT NOT NULL,
+    sha TEXT NOT NULL,
+    bytes INTEGER NOT NULL,
+    modified_at TEXT,
+    UNIQUE (machine_id, base_path, rel_path)
+);
+CREATE INDEX rule_files_name ON rule_files(kind, name);
+
+CREATE TABLE rule_items (
+    id INTEGER PRIMARY KEY,
+    file_id INTEGER NOT NULL REFERENCES rule_files(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    level INTEGER NOT NULL,
+    heading TEXT,
+    content TEXT NOT NULL,
+    sha TEXT NOT NULL
+);
+CREATE INDEX rule_items_sha ON rule_items(sha);
+"""
+
+MIGRATIONS = [SCHEMA, RULES_SCHEMA]
 
 
 def init(data_dir: Path) -> None:

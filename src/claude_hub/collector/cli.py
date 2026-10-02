@@ -13,6 +13,7 @@ from pathlib import Path
 from . import config as config_module
 from .client import Client, HubError
 from .gitscan import build_inventory
+from .rulescan import scan_repo, scan_user
 from .sessions import find_transcripts, sync_account
 
 
@@ -20,7 +21,8 @@ def log(message: str) -> None:
     print(f"{datetime.now():%Y-%m-%d %H:%M:%S} {message}", flush=True)
 
 
-def run_once(cfg: config_module.Config, sessions: bool = True, inventory: bool = True) -> None:
+def run_once(cfg: config_module.Config, sessions: bool = True, inventory: bool = True,
+             rules: bool = True) -> None:
     client = Client(cfg.server_url, cfg.token)
     _, hello = client.request("POST", "/api/v1/hello", {"platform": platform.system().lower()})
     repos_seen: set[str] = set()
@@ -42,6 +44,20 @@ def run_once(cfg: config_module.Config, sessions: bool = True, inventory: bool =
         _, answer = client.request("PUT", "/api/v1/inventory",
                                    {"platform": platform.system().lower(), "repos": repos})
         log(f"inventory: {answer['repos']} repositories, {answer['worktrees']} worktrees")
+
+        if rules:
+            sources = [
+                {"scope": "user", "account": account.label, "base_path": str(account.config_dir),
+                 "files": scan_user(account.config_dir)}
+                for account in cfg.accounts if account.config_dir.is_dir()
+            ]
+            sources += [
+                {"scope": "project", "base_path": repo["path"], "remote": repo["remote"],
+                 "files": scan_repo(Path(repo["path"]))}
+                for repo in repos
+            ]
+            _, answer = client.request("PUT", "/api/v1/rules", {"sources": sources})
+            log(f"instruction files: {answer['files']} files, {answer['items']} rules")
     log(f"done, reported as machine '{hello['machine']}'")
 
 
@@ -49,7 +65,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     cfg = config_module.load(args.config)
     while True:
         try:
-            run_once(cfg, sessions=not args.no_sessions, inventory=not args.no_inventory)
+            run_once(cfg, sessions=not args.no_sessions, inventory=not args.no_inventory,
+                     rules=not args.no_rules)
         except HubError as exc:
             log(f"error: {exc}")
             if not args.interval:
@@ -103,7 +120,9 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--interval", type=int, default=0,
                      help="Repeat every N seconds. Without it, run once and exit.")
     run.add_argument("--no-sessions", action="store_true")
-    run.add_argument("--no-inventory", action="store_true")
+    run.add_argument("--no-inventory", action="store_true",
+                     help="Skip repositories, worktrees, and instruction files")
+    run.add_argument("--no-rules", action="store_true", help="Skip instruction files")
     run.set_defaults(func=cmd_run)
 
     sub.add_parser("check", help="Test the connection and the configuration").set_defaults(func=cmd_check)

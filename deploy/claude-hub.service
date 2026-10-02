@@ -1,0 +1,19 @@
+[Unit]
+Description=Claude hub
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=hub
+Group=hub
+Environment=HUB_DATA_DIR=/var/lib/claude-hub
+EnvironmentFile=/etc/claude-hub.env
+ExecStart=/opt/claude-hub/venv/bin/claude-hub serve --host 0.0.0.0 --port 8787
+Restart=on-failure
+RestartSec=5
+# Sandboxing that needs mount namespaces is left out on purpose: it fails in
+# an unprivileged Proxmox container without the nesting feature.
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

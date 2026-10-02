@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from .. import __version__
+from ..rules import describe
 from ..transcript import parse_meta
 from . import db, projects, store
 
@@ -97,6 +98,25 @@ class RepoIn(BaseModel):
     remote: str | None = None
     default_branch: str | None = None
     worktrees: list[WorktreeIn] = []
+
+
+class RuleFileIn(BaseModel):
+    rel_path: str
+    kind: str
+    content: str
+    modified_at: str | None = None
+
+
+class RuleSourceIn(BaseModel):
+    scope: str
+    base_path: str
+    account: str | None = None
+    remote: str | None = None
+    files: list[RuleFileIn] = []
+
+
+class RulesBody(BaseModel):
+    sources: list[RuleSourceIn] = []
 
 
 class InventoryBody(BaseModel):
@@ -297,3 +317,46 @@ def put_inventory(
     )
     conn.commit()
     return {"repos": len(body.repos), "worktrees": worktrees}
+
+
+@router.put("/rules")
+def put_rules(
+    body: RulesBody,
+    machine: sqlite3.Row = Depends(current_machine),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    """Replace this machine's instruction files."""
+    conn.execute("DELETE FROM rule_files WHERE machine_id = ?", (machine["id"],))
+    files = items = 0
+    for source in body.sources:
+        account_id = project_id = None
+        if source.scope == "user":
+            account_id = _account_id(conn, machine["user_id"], source.account or "default")
+        elif source.scope == "project":
+            if source.remote:
+                project_id = projects.project_for_remote(conn, source.remote)
+            else:
+                project_id = projects.project_for_local_repo(conn, machine["name"], source.base_path)
+        else:
+            raise HTTPException(400, "Unknown scope")
+        for entry in source.files:
+            info = describe(entry.kind, entry.rel_path, entry.content)
+            file_id = conn.execute(
+                """INSERT OR REPLACE INTO rule_files
+                       (machine_id, scope, account_id, project_id, base_path, rel_path, kind, name,
+                        description, applies_to, content, sha, bytes, modified_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (machine["id"], source.scope, account_id, project_id, source.base_path,
+                 entry.rel_path, entry.kind, info["name"], info["description"], info["applies_to"],
+                 entry.content, info["sha"], len(entry.content.encode()), entry.modified_at),
+            ).lastrowid
+            files += 1
+            for position, item in enumerate(info["items"]):
+                conn.execute(
+                    "INSERT INTO rule_items (file_id, position, level, heading, content, sha) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (file_id, position, item["level"], item["heading"], item["content"], item["sha"]),
+                )
+                items += 1
+    conn.commit()
+    return {"files": files, "items": items}
