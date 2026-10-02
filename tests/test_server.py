@@ -285,3 +285,76 @@ def test_existing_database_gets_new_tables(tmp_path):
     assert conn.execute("SELECT name FROM users").fetchone()[0] == "kept"
     assert conn.execute("SELECT COUNT(*) FROM rule_files").fetchone()[0] == 0
     conn.close()
+
+
+def tool_line(session_id, cwd, file_path, index):
+    return {"type": "assistant", "sessionId": session_id, "cwd": cwd, "uuid": f"t{index}",
+            "timestamp": f"2026-10-01T11:00:0{index}.000Z", "isSidechain": False,
+            "message": {"id": f"tm{index}", "model": "claude-test", "stop_reason": "tool_use",
+                        "content": [{"type": "tool_use", "id": f"tt{index}", "name": "Read",
+                                     "input": {"file_path": file_path}}]}}
+
+
+def project_key(data_dir, session_id):
+    return one(data_dir, "SELECT p.key FROM sessions s JOIN projects p ON p.id = s.project_id "
+                         "WHERE s.session_id = ?", session_id)["key"]
+
+
+def test_session_started_in_a_drive_root_goes_to_the_repository_it_worked_in(client, data_dir):
+    lines = make_lines("s1", "D:\\", ["Work on orbis"])
+    lines += [tool_line("s1", "D:\\", f"D:\\dev\\orbis\\src\\File{i}.cs", i) for i in range(3)]
+    idle = make_lines("s2", "D:\\", ["Just a question"])
+
+    # Before any inventory, both sessions can only be filed under the folder.
+    upload(client, "s1", to_jsonl(lines))
+    upload(client, "s2", to_jsonl(idle))
+    assert project_key(data_dir, "s1") == project_key(data_dir, "s2") == "dir:desktop:d:"
+
+    client.put("/api/v1/inventory", json=INVENTORY)
+    assert project_key(data_dir, "s1") == "git:github.com/robing98/orbis"
+    assert project_key(data_dir, "s2") == "dir:desktop:d:"
+
+    # With the inventory known, a new session is assigned at upload.
+    upload(client, "s3", to_jsonl([dict(line, sessionId="s3") for line in lines]))
+    assert project_key(data_dir, "s3") == "git:github.com/robing98/orbis"
+
+
+def test_one_stray_file_does_not_move_a_session(client, data_dir):
+    client.put("/api/v1/inventory", json=INVENTORY)
+    lines = make_lines("s1", "C:\\Users\\robin", ["Question"])
+    lines.append(tool_line("s1", "C:\\Users\\robin", "D:\\dev\\orbis\\README.md", 0))
+    upload(client, "s1", to_jsonl(lines))
+    assert project_key(data_dir, "s1") == "dir:desktop:c:/users/robin"
+
+
+def test_removed_worktree_joins_the_folder_of_its_repository(client, data_dir):
+    base = "D:\\golleit\\marketing suite"
+    upload(client, "s1", to_jsonl(make_lines("s1", base, ["Main work"])))
+    upload(client, "s2", to_jsonl(make_lines("s2", base + "\\.claude\\worktrees\\frosty-1", ["Side work"])))
+    assert project_key(data_dir, "s1") == project_key(data_dir, "s2") == "dir:desktop:d:/golleit/marketing suite"
+
+
+def test_reparse_outdated_updates_old_sessions(client, data_dir, capsys):
+    from claude_hub.server import cli
+    from claude_hub.transcript import PARSER_VERSION
+
+    lines = make_lines("s1", "D:\\", ["Work on orbis"])
+    lines += [tool_line("s1", "D:\\", f"D:\\dev\\orbis\\src\\File{i}.cs", i) for i in range(3)]
+    upload(client, "s1", to_jsonl(lines))
+    client.put("/api/v1/inventory", json={"repos": []})
+    # Simulate a session that an older release stored: no work folders yet.
+    conn = db.connect(data_dir)
+    conn.execute("UPDATE sessions SET work_dirs = NULL, parser_version = 1")
+    conn.execute("INSERT INTO repos (machine_id, project_id, path, seen_at) VALUES (1, ?, 'D:\\dev\\orbis', 'x')",
+                 (conn.execute("INSERT INTO projects (key, kind, name, created_at) "
+                               "VALUES ('git:github.com/robing98/orbis', 'repo', 'orbis', 'x')").lastrowid,))
+    conn.commit()
+    conn.close()
+
+    assert cli.main(["--data-dir", str(data_dir), "reparse", "--outdated"]) == 0
+    assert "Re-parsed 1 sessions, moved 1" in capsys.readouterr().out
+    assert project_key(data_dir, "s1") == "git:github.com/robing98/orbis"
+    assert one(data_dir, "SELECT parser_version FROM sessions")["parser_version"] == PARSER_VERSION
+
+    assert cli.main(["--data-dir", str(data_dir), "reparse", "--outdated"]) == 0
+    assert "Re-parsed 0 sessions" in capsys.readouterr().out

@@ -182,7 +182,12 @@ CREATE TABLE rule_items (
 CREATE INDEX rule_items_sha ON rule_items(sha);
 """
 
-MIGRATIONS = [SCHEMA, RULES_SCHEMA]
+WORK_DIRS_SCHEMA = """
+ALTER TABLE sessions ADD COLUMN work_dirs TEXT;
+ALTER TABLE sessions ADD COLUMN parser_version INTEGER NOT NULL DEFAULT 0;
+"""
+
+MIGRATIONS = [SCHEMA, RULES_SCHEMA, WORK_DIRS_SCHEMA]
 
 
 def init(data_dir: Path) -> None:

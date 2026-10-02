@@ -29,6 +29,15 @@ _NOISE_PREFIXES = (
     "<user-prompt-submit-hook>",
 )
 
+# Raise this when parse_meta derives something new. The server re-parses
+# stored transcripts that were read with an older version.
+PARSER_VERSION = 2
+
+_ABSOLUTE = re.compile(r"^(?:[A-Za-z]:[\\/]|/|\\\\)")
+_CD = re.compile(r"""(?:^|&&|;|\|)\s*cd\s+(?:/d\s+)?["']?((?:[A-Za-z]:[\\/]|/)[^"'&;|\n]*)""")
+_PATH_KEYS = ("file_path", "path", "notebook_path")
+WORK_DIR_LIMIT = 40
+
 TITLE_LENGTH = 90
 PROMPT_LENGTH = 600
 TOOL_INPUT_LENGTH = 600
@@ -55,6 +64,9 @@ class SessionMeta:
     # What the transcript ends with: "prompt", "reply", "tool_call", or "tool_result".
     last_event: str | None = None
     last_tool: str | None = None
+    # Folders that the session touched, with a count. A session that starts
+    # in a parent folder is assigned to a repository through these.
+    work_dirs: dict[str, int] = field(default_factory=dict)
     lines: int = 0
     parse_errors: int = 0
 
@@ -102,6 +114,26 @@ def human_text(obj: dict[str, Any]) -> str | None:
     return text
 
 
+def _parent(path: str) -> str:
+    return re.split(r"[\\/](?=[^\\/]*$)", path.rstrip("\\/"), maxsplit=1)[0]
+
+
+def _tool_dirs(block: dict[str, Any]) -> Iterator[str]:
+    """Yield the absolute folders that one tool call refers to."""
+    data = block.get("input")
+    if not isinstance(data, dict):
+        return
+    for key in _PATH_KEYS:
+        value = data.get(key)
+        if isinstance(value, str) and _ABSOLUTE.match(value):
+            # "path" names a folder for search tools, the other keys name a file.
+            yield value if key == "path" else _parent(value)
+    command = data.get("command")
+    if isinstance(command, str):
+        for match in _CD.finditer(command):
+            yield match.group(1).strip()
+
+
 def _has_tool_result(obj: dict[str, Any]) -> bool:
     content = (obj.get("message") or {}).get("content")
     return isinstance(content, list) and any(
@@ -112,6 +144,7 @@ def _has_tool_result(obj: dict[str, Any]) -> bool:
 def parse_meta(lines: Iterable[bytes | str]) -> SessionMeta:
     """Derive the session summary fields from a transcript."""
     meta = SessionMeta()
+    dirs: dict[str, int] = {}
     models: list[str] = []
     ai_title = legacy_summary = None
     counted_messages: set[str] = set()
@@ -134,6 +167,8 @@ def parse_meta(lines: Iterable[bytes | str]) -> SessionMeta:
             if meta.ended_at is None or stamp > meta.ended_at:
                 meta.ended_at = stamp
 
+        if isinstance(obj.get("cwd"), str):
+            dirs[obj["cwd"]] = dirs.get(obj["cwd"], 0) + 1
         # Subagent lines carry their own directory and must not move the session.
         if not obj.get("isSidechain"):
             meta.cwd = meta.cwd or obj.get("cwd")
@@ -158,7 +193,12 @@ def parse_meta(lines: Iterable[bytes | str]) -> SessionMeta:
                 meta.last_event = "prompt"
             elif not obj.get("isSidechain") and _has_tool_result(obj):
                 meta.last_event = "tool_result"
-        elif kind == "assistant" and not obj.get("isSidechain"):
+        if kind == "assistant":
+            for block in (obj.get("message") or {}).get("content") or []:
+                if isinstance(block, dict) and block.get("type") == "tool_use":
+                    for folder in _tool_dirs(block):
+                        dirs[folder] = dirs.get(folder, 0) + 1
+        if kind == "assistant" and not obj.get("isSidechain"):
             message = obj.get("message") or {}
             # One API message is written as several lines, one per content block.
             message_id = message.get("id") or obj.get("uuid") or str(meta.lines)
@@ -180,6 +220,8 @@ def parse_meta(lines: Iterable[bytes | str]) -> SessionMeta:
                     meta.last_event = "tool_call" if unfinished else "reply"
 
     meta.models = models
+    top = sorted(dirs.items(), key=lambda item: -item[1])[:WORK_DIR_LIMIT]
+    meta.work_dirs = dict(top)
     title = ai_title or legacy_summary or meta.first_prompt
     meta.title = _shorten(title.splitlines()[0], TITLE_LENGTH) if title else None
     return meta

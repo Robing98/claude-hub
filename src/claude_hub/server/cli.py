@@ -9,7 +9,9 @@ import sys
 from pathlib import Path
 
 from . import db
+from ..transcript import PARSER_VERSION
 from .ingest import hash_token, refresh_session
+from .projects import reassign_loose_sessions
 
 
 def _data_dir(args: argparse.Namespace) -> Path:
@@ -71,17 +73,30 @@ def cmd_token_list(args: argparse.Namespace) -> int:
 
 
 def cmd_reparse(args: argparse.Namespace) -> int:
-    """Re-derive all session fields. Use this after a parser change."""
+    """Re-derive session fields from the stored transcripts.
+
+    Needed after a parser change. Each session is committed on its own, so
+    that a running server is blocked only briefly.
+    """
     data_dir = _data_dir(args)
+    db.init(data_dir)
     conn = db.connect(data_dir)
     try:
-        keys = [row["pk"] for row in conn.execute("SELECT pk FROM sessions").fetchall()]
+        query = "SELECT pk FROM sessions"
+        if args.outdated:
+            query += f" WHERE parser_version < {PARSER_VERSION}"
+        keys = [row["pk"] for row in conn.execute(query).fetchall()]
         for pk in keys:
             refresh_session(conn, data_dir, pk)
-        conn.commit()
+            conn.commit()
+        moved = 0
+        if keys:
+            for machine in conn.execute("SELECT id FROM machines").fetchall():
+                moved += reassign_loose_sessions(conn, machine["id"])
+            conn.commit()
     finally:
         conn.close()
-    print(f"Re-parsed {len(keys)} sessions.")
+    print(f"Re-parsed {len(keys)} sessions, moved {moved} to another project.")
     return 0
 
 
@@ -103,9 +118,10 @@ def main(argv: list[str] | None = None) -> int:
     add.set_defaults(func=cmd_token_add)
     token_sub.add_parser("list", help="List machines").set_defaults(func=cmd_token_list)
 
-    sub.add_parser("reparse", help="Re-derive session fields from stored transcripts").set_defaults(
-        func=cmd_reparse
-    )
+    reparse = sub.add_parser("reparse", help="Re-derive session fields from stored transcripts")
+    reparse.add_argument("--outdated", action="store_true",
+                         help="Only sessions that an older parser version read")
+    reparse.set_defaults(func=cmd_reparse)
 
     args = parser.parse_args(argv)
     return args.func(args)

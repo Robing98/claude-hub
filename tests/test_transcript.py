@@ -79,3 +79,27 @@ def test_turns_merge_blocks_and_attach_tool_results():
     assert tool["name"] == "Bash" and tool["result"] == "file.txt"
     assert json.loads(tool["input"]) == {"command": "ls"}
     assert text == {"kind": "text", "text": "Answer 0"}
+
+
+def test_work_dirs_count_the_folders_a_session_touched():
+    def tool(name, **data):
+        return {"type": "assistant", "cwd": "D:\\", "sessionId": "s",
+                "message": {"id": name, "content": [{"type": "tool_use", "id": name, "name": "X", "input": data}]}}
+
+    objs = [
+        tool("a", file_path="D:\\dev\\orbis\\src\\World.cs"),
+        tool("b", file_path="D:\\dev\\orbis\\src\\Player.cs"),
+        tool("c", path="D:\\dev\\orbis"),
+        tool("d", command='cd /d "D:\\dev\\orbis\\tools" && dotnet build'),
+        tool("e", command="cd /home/robin/code/app && make; cd relative/path"),
+        tool("f", file_path="relative/file.txt"),
+        tool("g", notebook_path="/srv/nb/analysis.ipynb"),
+    ]
+    dirs = parse_meta(lines_of(objs)).work_dirs
+    assert dirs["D:\\dev\\orbis\\src"] == 2
+    assert dirs["D:\\dev\\orbis"] == 1
+    assert dirs["D:\\dev\\orbis\\tools"] == 1
+    assert dirs["/home/robin/code/app"] == 1
+    assert dirs["/srv/nb"] == 1
+    assert dirs["D:\\"] == len(objs)
+    assert not any("relative" in key for key in dirs)

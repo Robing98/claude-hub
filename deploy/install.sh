@@ -69,6 +69,9 @@ until python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.
     sleep 1
 done
 
+# After a parser change, bring stored sessions up to date. Without one this does nothing.
+/usr/local/bin/claude-hub reparse --outdated
+
 ADDRESS=$(hostname -I 2>/dev/null | awk '{print $1}')
 echo "The hub runs at http://${ADDRESS:-ADDRESS}:$PORT"
 echo "Create a collector token with: /usr/local/bin/claude-hub token add MACHINE --user USER"

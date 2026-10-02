@@ -6,6 +6,7 @@ import base64
 import binascii
 import gzip
 import hashlib
+import json
 import sqlite3
 from pathlib import Path
 from typing import Iterator
@@ -16,7 +17,7 @@ from pydantic import BaseModel, Field
 
 from .. import __version__
 from ..rules import describe
-from ..transcript import parse_meta
+from ..transcript import PARSER_VERSION, parse_meta
 from . import db, projects, store
 
 router = APIRouter(prefix="/api/v1")
@@ -225,13 +226,16 @@ def append_session(
         )
 
     if body.final:
-        refresh_session(conn, data_dir, pk)
+        work_dirs = refresh_session(conn, data_dir, pk)
         cwd = conn.execute("SELECT cwd FROM sessions WHERE pk = ?", (pk,)).fetchone()["cwd"]
         resolved = projects.resolve_session_project(
-            conn, machine, body.cwd or cwd, body.remote, body.repo_root
+            conn, machine, body.cwd or cwd, body.remote, body.repo_root, work_dirs
         )
-        # Keep an existing assignment unless Git now identifies the repository.
-        if resolved and (project_id is None or body.remote):
+        loose = project_id is None or conn.execute(
+            "SELECT kind FROM projects WHERE id = ?", (project_id,)).fetchone()["kind"] == "dir"
+        # A repository assignment stays. A plain-folder one is only a fallback,
+        # so it gives way as soon as the session's work points to a repository.
+        if resolved and (loose or body.remote):
             conn.execute("UPDATE sessions SET project_id = ? WHERE pk = ?", (resolved, pk))
 
     conn.commit()
@@ -250,21 +254,26 @@ def _account_id(conn: sqlite3.Connection, user_id: int, label: str) -> int:
     ).lastrowid
 
 
-def refresh_session(conn: sqlite3.Connection, data_dir: Path, pk: int) -> None:
-    """Re-derive the summary fields from the stored transcript."""
+def refresh_session(conn: sqlite3.Connection, data_dir: Path, pk: int) -> dict[str, int]:
+    """Re-derive the summary fields from the stored transcript.
+
+    Returns the folders that the session worked in.
+    """
     row = conn.execute("SELECT machine_id, session_id FROM sessions WHERE pk = ?", (pk,)).fetchone()
     path = store.transcript_path(data_dir, row["machine_id"], row["session_id"])
     meta = parse_meta(store.read_lines(path))
     conn.execute(
         """UPDATE sessions SET cwd = ?, git_branch = ?, title = ?, first_prompt = ?, last_prompt = ?,
                started_at = ?, ended_at = ?, user_prompts = ?, assistant_messages = ?, tool_calls = ?,
-               entrypoint = ?, cc_version = ?, models = ?, cost_usd = ?, last_event = ?, last_tool = ?
+               entrypoint = ?, cc_version = ?, models = ?, cost_usd = ?, last_event = ?, last_tool = ?,
+               work_dirs = ?, parser_version = ?
            WHERE pk = ?""",
         (meta.cwd, meta.git_branch, meta.title, meta.first_prompt, meta.last_prompt,
          meta.started_at, meta.ended_at, meta.user_prompts, meta.assistant_messages, meta.tool_calls,
          meta.entrypoint, meta.cc_version, ", ".join(meta.models), meta.cost_usd,
-         meta.last_event, meta.last_tool, pk),
+         meta.last_event, meta.last_tool, json.dumps(meta.work_dirs), PARSER_VERSION, pk),
     )
+    return meta.work_dirs
 
 
 @router.put("/inventory")
@@ -301,20 +310,8 @@ def put_inventory(
             )
             worktrees += 1
 
-    # Sessions that were filed as plain folders may belong to a repository
-    # that this inventory has just made known.
-    for session in conn.execute(
-        """SELECT s.pk, s.cwd FROM sessions s JOIN projects p ON p.id = s.project_id
-           WHERE s.machine_id = ? AND p.kind = 'dir' AND s.cwd IS NOT NULL""",
-        (machine["id"],),
-    ).fetchall():
-        found = projects.project_from_inventory(conn, machine["id"], session["cwd"])
-        if found:
-            conn.execute("UPDATE sessions SET project_id = ? WHERE pk = ?", (found, session["pk"]))
-    conn.execute(
-        "DELETE FROM projects WHERE kind = 'dir' AND id NOT IN "
-        "(SELECT project_id FROM sessions WHERE project_id IS NOT NULL)"
-    )
+    # This inventory may have made known where loose sessions belong.
+    projects.reassign_loose_sessions(conn, machine["id"])
     conn.commit()
     return {"repos": len(body.repos), "worktrees": worktrees}
 
