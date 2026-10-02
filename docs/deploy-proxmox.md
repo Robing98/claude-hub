@@ -35,8 +35,10 @@ Run the same command again to update. The data in `/var/lib/claude-hub` and the 
 On the Proxmox host, once per machine that runs a collector:
 
 ```bash
-pct exec ID -- claude-hub token add MACHINE --user USER
+pct exec ID -- /usr/local/bin/claude-hub token add MACHINE --user USER
 ```
+
+Use the full path. `pct exec` does not search `/usr/local/bin`.
 
 The token is shown only once. Put it into the collector configuration of that machine, together with `server_url = "http://ADDRESS:8787"`.
 

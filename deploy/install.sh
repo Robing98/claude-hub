@@ -42,6 +42,9 @@ echo "== Install the hub"
 # A wrapper, so that `claude-hub token add ...` uses the service's data and user.
 cat > /usr/local/bin/claude-hub <<WRAPPER
 #!/bin/sh
+# "pct exec" starts commands with an almost empty PATH, so set it here.
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
 exec runuser -u hub -- env HUB_DATA_DIR=$DATA $APP/venv/bin/claude-hub "\$@"
 WRAPPER
 chmod 755 /usr/local/bin/claude-hub
@@ -68,4 +71,4 @@ done
 
 ADDRESS=$(hostname -I 2>/dev/null | awk '{print $1}')
 echo "The hub runs at http://${ADDRESS:-ADDRESS}:$PORT"
-echo "Create a collector token with: claude-hub token add MACHINE --user USER"
+echo "Create a collector token with: /usr/local/bin/claude-hub token add MACHINE --user USER"
