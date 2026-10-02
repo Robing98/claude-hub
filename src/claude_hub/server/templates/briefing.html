@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% set active = "rules" %}
+{% block title %}Briefing for {{ project.name }} · Claude hub{% endblock %}
+{% block main %}
+<p class="crumbs"><a href="/projects/{{ project.id }}">{{ project.name }}</a></p>
+<h1>Session briefing</h1>
+<p class="lead">This is the text that a Claude Code session in {{ project.name }} receives at its start: about {{ briefing.tokens }} tokens.</p>
+{% if briefing.text %}
+<div class="turns"><article class="turn"><div class="text">{{ briefing.text }}</div></article></div>
+{% else %}
+<p class="empty">No rule set applies to this project.</p>
+{% endif %}
+{% endblock %}

@@ -14,10 +14,11 @@ from fastapi.templating import Jinja2Templates
 
 from ..remote import is_within
 from ..rules import FILE_NAMED_KINDS
+from ..rulesets import applies, build_briefing, load_rulesets
 from ..transcript import iter_turns
 from . import projects as project_rules
 from . import store
-from .ingest import get_conn
+from .ingest import get_conn, project_view
 from .status import (
     ACTION_STATES,
     RECENT_DAYS,
@@ -274,8 +275,13 @@ def project_page(project_id: int, request: Request, conn: sqlite3.Connection = D
         current = str(project["workspace_id"])
         if project["class_id"]:
             current += f":{project['class_id']}"
+    rulesets = load_rulesets(request.app.state.rulesets_dir)
+    view = project_view(conn, project_id)
+    mine = [rs for rs in rulesets if applies(rs, view)]
+    briefing = build_briefing(rulesets, view)
     return render(request, conn, "project.html", project=project, sessions=sessions,
-                  worktrees=worktrees, targets=targets(conn), current_target=current)
+                  worktrees=worktrees, targets=targets(conn), current_target=current,
+                  rulesets=mine, briefing=briefing)
 
 
 @router.get("/sessions")
@@ -422,6 +428,44 @@ def rule_file_page(file_id: int, request: Request, conn: sqlite3.Connection = De
     return render(request, conn, "rule_file.html", file=current, copies=copies, items=items)
 
 
+@router.get("/rulesets")
+def rulesets_page(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    rulesets = load_rulesets(request.app.state.rulesets_dir)
+    imported = conn.execute("SELECT COUNT(*) FROM rule_files").fetchone()[0]
+    rows = []
+    for row in conn.execute(
+        """SELECT p.id FROM projects p WHERE p.kind = 'repo' OR p.workspace_id IS NOT NULL
+           ORDER BY p.name"""
+    ).fetchall():
+        project = project_view(conn, row["id"])
+        briefing = build_briefing(rulesets, project)
+        on_demand = sum(rs.tokens for rs in rulesets if rs.name in briefing["on_demand"])
+        rows.append({**project, "start_tokens": briefing["tokens"],
+                     "always": len(briefing["always"]), "on_demand": len(briefing["on_demand"]),
+                     "on_demand_tokens": on_demand})
+    return render(request, conn, "rulesets.html", rulesets=rulesets, imported=imported,
+                  projects=rows, folder=request.app.state.rulesets_dir)
+
+
+@router.get("/rulesets/{name}")
+def ruleset_page(name: str, request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    ruleset = next((rs for rs in load_rulesets(request.app.state.rulesets_dir)
+                    if rs.name == name), None)
+    if ruleset is None:
+        raise HTTPException(404, "Unknown rule set")
+    return render(request, conn, "ruleset.html", ruleset=ruleset)
+
+
+@router.get("/projects/{project_id}/briefing")
+def project_briefing_page(project_id: int, request: Request,
+                          conn: sqlite3.Connection = Depends(get_conn)):
+    project = project_view(conn, project_id)
+    if project is None:
+        raise HTTPException(404, "Unknown project")
+    briefing = build_briefing(load_rulesets(request.app.state.rulesets_dir), project)
+    return render(request, conn, "briefing.html", project=project, briefing=briefing)
+
+
 # --- forms -----------------------------------------------------------------
 
 
@@ -525,3 +569,10 @@ def delete_rule(rule_id: int, request: Request, conn: sqlite3.Connection = Depen
 def apply_rules(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     project_rules.apply_rules(conn)
     return back(request, conn, "/settings")
+
+
+@router.post("/projects/{project_id}/ai")
+def set_project_ai(project_id: int, request: Request, ai_ok: str = Form(""),
+                   conn: sqlite3.Connection = Depends(get_conn)):
+    conn.execute("UPDATE projects SET ai_ok = ? WHERE id = ?", (1 if ai_ok == "1" else 0, project_id))
+    return back(request, conn, f"/projects/{project_id}")

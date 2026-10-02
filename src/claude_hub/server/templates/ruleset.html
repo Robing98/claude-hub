@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% set active = "rules" %}
+{% block title %}{{ ruleset.title }} · Claude hub{% endblock %}
+{% block main %}
+<p class="crumbs"><a href="/rulesets">Rule sets</a></p>
+<h1>{{ ruleset.title }}</h1>
+<p class="sub"><span class="mono">{{ ruleset.name }}.md</span> · {{ ruleset.load }} · applies to {{ ruleset.scope }} · about {{ ruleset.tokens }} tokens</p>
+{% if ruleset.description %}<p class="lead">{{ ruleset.description }}</p>{% endif %}
+{% if ruleset.when %}<p class="hint">Load when: {{ ruleset.when }}</p>{% endif %}
+<div class="turns"><article class="turn"><div class="text">{{ ruleset.body }}</div></article></div>
+{% endblock %}

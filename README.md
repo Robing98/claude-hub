@@ -11,6 +11,8 @@ Status: phase 1. See [the plan](docs/plan.md) for the goal, the design, and the 
 - **Sessions:** every Claude Code transcript, stored in full and readable in the browser.
 - **Worktrees:** one state per worktree: `dirty`, `unpushed`, `missing`, `stale`, `merged`, `idle`, `active`, or `main`.
 - **Rules:** every instruction file that Claude Code loads, from all machines: `CLAUDE.md`, `.claude/rules/`, skills, subagents, commands, and output styles. `CLAUDE.md` and rule files are split into single rules by heading. Copies that differ are marked.
+- **Rule sets:** the hub hands each Claude Code session the rules of its project. A hook asks the hub at session start, and a local copy covers the time when the hub is not reachable. Sets marked "on-demand" cost one index line until the work needs them. See [the rule set format](rulesets/README.md).
+- **AI switch per project:** whether a project may carry AI traces in Git. Sets can depend on it.
 - **Several machines and accounts:** one collector per machine, one entry per Claude Code configuration directory.
 
 ## How it works
@@ -91,11 +93,24 @@ This command has not been verified on Windows yet. Repositories inside WSL need 
 | `hub config` | Open the collector configuration |
 | `hub wsl-setup` | Install or update the collector inside WSL |
 | `hub wsl-collect` | Upload from WSL once |
+| `hub rules` | Show the rules that a session in this folder receives |
+| `hub hooks-install` | Make Claude Code sessions fetch their rules from the hub |
 | `hub token NAME` | Create the token for the machine `NAME` |
 | `hub ship "TEXT"` | Commit with the message `TEXT`, push, and deploy |
 | `hub deploy` | Install the last commit on the server |
 
 The server address and the container ID are set at the top of `hub.bat`.
+
+## Rules from the hub
+
+1. Write or change the rule sets in `rulesets/` and deploy.
+2. On each machine, install the session hook once: `hub hooks-install`. Inside WSL: `hub wsl-hooks-install`. The command adds one entry to the Claude Code `settings.json` and keeps a backup beside it. `hub hooks-remove` undoes it.
+3. Start a new Claude Code session. Its first context contains the rules of the project.
+4. To see what a session receives in a folder, run `hub rules` there. `hub rules NAME` shows one set.
+
+The **Rules** page lists all sets with their size and shows, per project, how much a session carries at its start.
+
+Old `CLAUDE.md` files can stay on disk. To stop Claude Code from loading them as well, add them to `claudeMdExcludes` in the Claude Code settings.
 
 ## Worktree states
 

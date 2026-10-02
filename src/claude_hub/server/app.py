@@ -21,6 +21,8 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
 
     app = FastAPI(title="Claude hub", version=__version__, docs_url=None, redoc_url=None)
     app.state.data_dir = data_path
+    rulesets = os.environ.get("HUB_RULESETS_DIR")
+    app.state.rulesets_dir = Path(rulesets).resolve() if rulesets else Path.cwd() / "rulesets"
     app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
     app.include_router(ingest.router)
     app.include_router(views.router)

@@ -138,6 +138,19 @@ One place for all instructions, grouped by purpose and delivered per project, ro
 - Distribute: a private Git repository as a plugin marketplace. The same plugin installs in Claude Code and in Cowork.
 - The hub writes only into folders that it owns and never edits hand-written files.
 
+Built so far:
+
+- Rule sets are Markdown files in `rulesets/` of the hub repository. The hub is their only source.
+- Each project has an AI switch: whether AI traces in Git are allowed. The default is no. Sets can depend on it.
+- A `SessionStart` hook fetches the rules of the project from the hub and keeps a local copy for the time when the hub is not reachable.
+- Sets marked "on-demand" appear as one index line. The agent loads a set with a command when the work needs it.
+- Consolidated so far: four shared sets, the hub's own set, and Orbis split into 14 sets without a change of wording.
+
+Open:
+
+- Cowork, chat, and Claude Design sessions cannot fetch rules from the hub. Orbis keeps its `CLAUDE.md` in Git because those lanes read it. Decide whether the hub generates that file from the sets, so that there is still one source.
+- The synchrotron and GolleIT rules are not consolidated yet.
+
 ## Roadmap per project
 
 Projects that are marked as deep get a roadmap. Loose chats and small projects stay without one.

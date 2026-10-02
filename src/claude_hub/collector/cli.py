@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import platform
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
 
+from . import briefing
 from . import config as config_module
 from .client import Client, HubError
 from .gitscan import build_inventory
@@ -110,6 +112,68 @@ def cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cache_dir(args: argparse.Namespace) -> Path:
+    return args.config.parent / "cache"
+
+
+def _custom_config(args: argparse.Namespace) -> Path | None:
+    """The config path, if it is not the default one. Hook commands must repeat it."""
+    return None if args.config == config_module.default_path() else args.config
+
+
+def cmd_hook(args: argparse.Namespace) -> int:
+    """Print the session rules. Never fails, so that a session always starts."""
+    try:
+        cwd = os.getcwd()
+        if not sys.stdin.isatty():
+            raw = sys.stdin.read()
+            if raw.strip():
+                cwd = json.loads(raw).get("cwd") or cwd
+        cfg = config_module.load(args.config)
+        text, cached = briefing.fetch_briefing(cfg, _cache_dir(args), cwd)
+        if text:
+            text = text.replace(briefing.PLACEHOLDER,
+                                briefing.rules_command(_custom_config(args)) + " rules show")
+            if cached:
+                text += "\n(The hub was not reachable. These rules are the last saved copy.)\n"
+            briefing.emit(text)
+    except Exception:  # noqa: BLE001 - a broken hook must not block the session
+        pass
+    return 0
+
+
+def cmd_rules_show(args: argparse.Namespace) -> int:
+    cfg = config_module.load(args.config)
+    text, state = briefing.fetch_ruleset(cfg, _cache_dir(args), args.name)
+    if text is None:
+        reason = ("The hub is not reachable and there is no saved copy of"
+                  if state == "offline" else "The hub has no")
+        print(f"{reason} rule set '{args.name}'.", file=sys.stderr)
+        return 1
+    briefing.emit(text)
+    if state == "cached":
+        briefing.emit("\n(The hub was not reachable. This is the last saved copy.)\n")
+    return 0
+
+
+def cmd_rules_list(args: argparse.Namespace) -> int:
+    cfg = config_module.load(args.config)
+    text, cached = briefing.fetch_briefing(cfg, _cache_dir(args), os.getcwd())
+    if not text:
+        print("No rule set applies here, or the hub is not reachable.")
+        return 0
+    briefing.emit(text.replace(briefing.PLACEHOLDER,
+                               briefing.rules_command(_custom_config(args)) + " rules show"))
+    return 0
+
+
+def cmd_hooks_install(args: argparse.Namespace) -> int:
+    cfg = config_module.load(args.config)
+    for account in cfg.accounts:
+        print(briefing.install_hook(account.config_dir, _custom_config(args), remove=args.remove))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="claude-hub-collector")
     parser.add_argument("--config", type=Path, default=config_module.default_path(),
@@ -128,6 +192,25 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("check", help="Test the connection and the configuration").set_defaults(func=cmd_check)
     sub.add_parser("scan", help="Print the repository inventory without sending it").set_defaults(func=cmd_scan)
     sub.add_parser("init", help="Write an example configuration").set_defaults(func=cmd_init)
+
+    hook = sub.add_parser("hook", help="Called by Claude Code hooks")
+    hook_sub = hook.add_subparsers(dest="hook_command", required=True)
+    hook_sub.add_parser("session-start", help="Print the rules for the session").set_defaults(
+        func=cmd_hook)
+
+    rules = sub.add_parser("rules", help="Rule sets from the hub")
+    rules_sub = rules.add_subparsers(dest="rules_command", required=True)
+    show = rules_sub.add_parser("show", help="Print one rule set")
+    show.add_argument("name")
+    show.set_defaults(func=cmd_rules_show)
+    rules_sub.add_parser("list", help="Print what a session in this folder receives").set_defaults(
+        func=cmd_rules_list)
+
+    hooks = sub.add_parser("hooks", help="Manage the Claude Code hook")
+    hooks_sub = hooks.add_subparsers(dest="hooks_command", required=True)
+    install = hooks_sub.add_parser("install", help="Add the session hook to Claude Code")
+    install.add_argument("--remove", action="store_true", help="Remove the hook instead")
+    install.set_defaults(func=cmd_hooks_install)
 
     args = parser.parse_args(argv)
     try:

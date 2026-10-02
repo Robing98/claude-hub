@@ -24,6 +24,27 @@
   </form>
 </div>
 
+<section>
+  <h2>Rules for sessions</h2>
+  <div class="toolbar">
+    <form method="post" action="/projects/{{ project.id }}/ai" class="inline">
+      <label class="check"><input type="checkbox" name="ai_ok" value="1"{% if project.ai_ok %} checked{% endif %}> AI traces in Git are allowed</label>
+      <button type="submit" class="quiet">Save</button>
+    </form>
+  </div>
+  {% if rulesets %}
+  <p class="hint"><a href="/projects/{{ project.id }}/briefing">A session starts with about {{ briefing.tokens }} tokens of rules.</a></p>
+  <ul class="plain box">
+    {% for rs in rulesets %}
+    <li><span><a href="/rulesets/{{ rs.name }}">{{ rs.title }}</a> <span class="sub">about {{ rs.tokens }} tokens</span></span>
+        <span class="pill {{ 'active' if rs.load == 'always' else '' }}">{{ rs.load }}</span></li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="empty">No rule set applies to this project.</p>
+  {% endif %}
+</section>
+
 {% if project.kind == "repo" %}
 <section>
   <h2>Worktrees <span class="count">{{ worktrees | length }}</span></h2>

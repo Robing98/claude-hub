@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from .. import __version__
 from ..rules import describe
+from ..rulesets import build_briefing, load_rulesets
 from ..transcript import PARSER_VERSION, parse_meta
 from . import db, projects, store
 
@@ -357,3 +358,52 @@ def put_rules(
                 items += 1
     conn.commit()
     return {"files": files, "items": items}
+
+
+def project_view(conn: sqlite3.Connection, project_id: int | None) -> dict | None:
+    """The fields of a project that decide which rule sets apply."""
+    if project_id is None:
+        return None
+    row = conn.execute(
+        """SELECT p.id, p.key, p.name, p.kind, p.ai_ok, w.name AS workspace
+           FROM projects p LEFT JOIN workspaces w ON w.id = p.workspace_id WHERE p.id = ?""",
+        (project_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+@router.get("/briefing")
+def get_briefing(
+    request: Request,
+    cwd: str = "",
+    remote: str = "",
+    repo_root: str = "",
+    machine: sqlite3.Row = Depends(current_machine),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    """Return the rules for a session that starts in ``cwd``."""
+    project_id = projects.resolve_session_project(
+        conn, machine, cwd or None, remote or None, repo_root or None)
+    project = project_view(conn, project_id)
+    # A plain folder is not a project with rules of its own. The session
+    # still gets the sets that apply everywhere.
+    if project and project["kind"] == "dir" and not project["workspace"]:
+        project = None
+    conn.commit()
+    result = build_briefing(load_rulesets(request.app.state.rulesets_dir), project)
+    result["project"] = project["name"] if project else None
+    return result
+
+
+@router.get("/rulesets/{name}")
+def get_ruleset(
+    name: str,
+    request: Request,
+    machine: sqlite3.Row = Depends(current_machine),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    conn.commit()
+    for ruleset in load_rulesets(request.app.state.rulesets_dir):
+        if ruleset.name == name:
+            return {"name": ruleset.name, "title": ruleset.title, "body": ruleset.body}
+    raise HTTPException(404, "Unknown rule set")

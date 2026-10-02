@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% set active = "rules" %}
+{% block title %}Rule sets · Claude hub{% endblock %}
+{% block main %}
+<h1>Rule sets</h1>
+<p class="lead">What Claude Code sessions receive from the hub. Each set is one file in <span class="mono">{{ folder }}</span>. A set marked "always" is part of every session start. The others appear as one index line and load on demand.</p>
+<p class="hint"><a href="/rules">Imported instruction files: {{ imported }}</a>. These are the files found on your machines, kept as the source for consolidation.</p>
+
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Set</th><th>Load</th><th>Applies to</th><th class="num">Size</th></tr></thead>
+  <tbody>
+  {% for rs in rulesets %}
+    <tr>
+      <td><a href="/rulesets/{{ rs.name }}">{{ rs.title }}</a><div class="sub mono">{{ rs.name }}</div>
+          {% if rs.description %}<div class="sub">{{ rs.description }}</div>{% endif %}</td>
+      <td><span class="pill {{ 'active' if rs.load == 'always' else '' }}">{{ rs.load }}</span>
+          {% if rs.when %}<div class="sub">{{ rs.when }}</div>{% endif %}</td>
+      <td>{{ rs.scope }}</td>
+      <td class="num">about {{ rs.tokens }} tokens</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="4" class="empty">No rule sets in {{ folder }}.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<section>
+  <h2>What a session carries per project</h2>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Project</th><th>Workspace</th><th>AI traces in Git</th><th class="num">At start</th><th class="num">On demand</th></tr></thead>
+    <tbody>
+    {% for p in projects %}
+      <tr>
+        <td><a href="/projects/{{ p.id }}">{{ p.name }}</a></td>
+        <td>{{ p.workspace or "" }}</td>
+        <td>{{ "allowed" if p.ai_ok else "not allowed" }}</td>
+        <td class="num"><a href="/projects/{{ p.id }}/briefing">{{ p.always }} sets, about {{ p.start_tokens }} tokens</a></td>
+        <td class="num">{{ p.on_demand }} sets, about {{ p.on_demand_tokens }} tokens</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="empty">No projects yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="hint">Sizes are estimates: one token is about four characters.</p>
+</section>
+{% endblock %}

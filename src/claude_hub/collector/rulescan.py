@@ -19,7 +19,7 @@ IMPORT_DEPTH = 4
 
 # Files in the repository root that hold instructions under a neutral name.
 # Claude Code does not load them by itself, but teams keep their rules there.
-ROOT_CONVENTIONS = {"conventions.md", "agents.md"}
+ROOT_CONVENTIONS = {"conventions.md", "agents.md", "projekt.md", "project.md"}
 
 # Folder below the base, file pattern, kind.
 _FOLDERS = [

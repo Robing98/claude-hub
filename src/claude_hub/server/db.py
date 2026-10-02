@@ -187,7 +187,12 @@ ALTER TABLE sessions ADD COLUMN work_dirs TEXT;
 ALTER TABLE sessions ADD COLUMN parser_version INTEGER NOT NULL DEFAULT 0;
 """
 
-MIGRATIONS = [SCHEMA, RULES_SCHEMA, WORK_DIRS_SCHEMA]
+# Whether a project may carry AI traces in Git: attribution in commits, Claude files.
+AI_SWITCH_SCHEMA = """
+ALTER TABLE projects ADD COLUMN ai_ok INTEGER NOT NULL DEFAULT 0;
+"""
+
+MIGRATIONS = [SCHEMA, RULES_SCHEMA, WORK_DIRS_SCHEMA, AI_SWITCH_SCHEMA]
 
 
 def init(data_dir: Path) -> None:

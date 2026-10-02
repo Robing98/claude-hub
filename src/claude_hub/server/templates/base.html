@@ -12,7 +12,7 @@
   <nav aria-label="Main">
     {% set pages = [("now", "/", "Now"), ("overview", "/overview", "Overview"), ("inbox", "/inbox", "Inbox"),
                     ("worktrees", "/worktrees", "Worktrees"), ("sessions", "/sessions", "Sessions"),
-                    ("rules", "/rules", "Rules"),
+                    ("rules", "/rulesets", "Rules"),
                     ("settings", "/settings", "Settings")] %}
     {% for key, href, label in pages %}
       <a href="{{ href }}"{% if active == key %} class="on" aria-current="page"{% endif %}>{{ label }}

@@ -23,6 +23,10 @@ if /i "%CMD%"=="check" goto check
 if /i "%CMD%"=="loop" goto loop
 if /i "%CMD%"=="config" goto config
 if /i "%CMD%"=="open" goto open
+if /i "%CMD%"=="rules" goto rules
+if /i "%CMD%"=="hooks-install" goto hooks_install
+if /i "%CMD%"=="hooks-remove" goto hooks_remove
+if /i "%CMD%"=="wsl-hooks-install" goto wsl_hooks_install
 if /i "%CMD%"=="token" goto token
 if /i "%CMD%"=="deploy" goto deploy
 if /i "%CMD%"=="ship" goto ship
@@ -45,6 +49,10 @@ echo   check          Test the connection and the configuration
 echo   loop           Upload every five minutes until you close the window
 echo   config         Open the collector configuration in Notepad
 echo   open           Open the hub in the browser
+echo   rules          Show the rules that a session in this folder receives
+echo   rules NAME     Show one rule set
+echo   hooks-install  Make Claude Code sessions fetch their rules from the hub
+echo   hooks-remove   Undo hooks-install
 echo.
 echo Inside WSL on this machine:
 echo   wsl-setup      Install or update the collector inside WSL
@@ -52,6 +60,7 @@ echo   wsl-config     Open the WSL collector configuration
 echo   wsl-check      Test the WSL collector
 echo   wsl-collect    Upload from WSL once
 echo   wsl-loop       Upload from WSL every five minutes
+echo   wsl-hooks-install  Same as hooks-install, for Claude Code inside WSL
 echo.
 echo On the server (needs SSH access to the Proxmox host):
 echo   token NAME     Create the token for the machine NAME
@@ -80,6 +89,26 @@ goto end
 
 :open
 start "" "%HUB_URL%"
+goto end
+
+:rules
+if "%~1"=="" (
+    "%PY%" -m claude_hub.collector.cli rules list
+) else (
+    "%PY%" -m claude_hub.collector.cli rules show %~1
+)
+goto end
+
+:hooks_install
+"%PY%" -m claude_hub.collector.cli hooks install
+goto end
+
+:hooks_remove
+"%PY%" -m claude_hub.collector.cli hooks install --remove
+goto end
+
+:wsl_hooks_install
+wsl bash -lc "$HOME/.claude-hub-venv/bin/claude-hub-collector hooks install"
 goto end
 
 :token
