@@ -57,10 +57,12 @@ class ConfigError(Exception):
 def default_path() -> Path:
     if os.environ.get("CLAUDE_HUB_CONFIG"):
         return Path(os.environ["CLAUDE_HUB_CONFIG"]).expanduser()
+    # An empty variable counts as unset. Otherwise the file would land in
+    # whatever folder the command runs in.
     if sys.platform == "win32":
-        base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+        base = Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming")
     else:
-        base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+        base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
     return base / "claude-hub" / "collector.toml"
 
 

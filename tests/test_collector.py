@@ -211,3 +211,32 @@ def test_linked_worktrees_inside_the_repository_are_not_unsaved_work(repo: Path)
     (repo / ".claude" / "notes.md").write_text("todo")
     main = next(wt for wt in gitscan.describe_repo(repo)["worktrees"] if wt["is_main"])
     assert main["dirty_files"] == 1
+
+
+def test_worktrees_of_the_other_system_are_left_out(repo: Path, monkeypatch):
+    # Seen from Windows, every path in this Linux test repository is foreign.
+    monkeypatch.setattr(gitscan.sys, "platform", "win32")
+    assert gitscan._foreign("/home/robin/.cache/ci/wt") and not gitscan._foreign("D:/dev/orbis")
+    monkeypatch.setattr(gitscan.sys, "platform", "linux")
+    assert gitscan._foreign("C:/Users/robin/repo") and not gitscan._foreign("/mnt/c/repo")
+
+    listing = "worktree /srv/repo\nHEAD abc\nbranch refs/heads/main\n\nworktree C:/Users/robin/wt\nHEAD def\nbranch refs/heads/x\nprunable gone\n"
+    monkeypatch.setattr(gitscan, "_parse_worktree_list", lambda text: gitscan.__dict__["_real_parse"](listing))
+    monkeypatch.setitem(gitscan.__dict__, "_real_parse", _REAL_PARSE)
+    branches = [wt["branch"] for wt in gitscan.describe_repo(repo)["worktrees"]]
+    assert branches == ["main"]
+
+
+_REAL_PARSE = gitscan._parse_worktree_list
+
+
+def test_default_config_path_ignores_empty_variables(monkeypatch, tmp_path):
+    from claude_hub.collector import config
+
+    monkeypatch.delenv("CLAUDE_HUB_CONFIG", raising=False)
+    monkeypatch.setattr(config.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(config.sys, "platform", "linux")
+    monkeypatch.setenv("XDG_CONFIG_HOME", "")
+    assert config.default_path() == tmp_path / ".config" / "claude-hub" / "collector.toml"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    assert config.default_path() == tmp_path / "xdg" / "claude-hub" / "collector.toml"

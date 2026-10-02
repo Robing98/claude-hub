@@ -77,7 +77,25 @@ To start the collector at logon on Windows without a console window, create a sc
 schtasks /Create /TN "Claude hub collector" /SC ONLOGON /TR "pythonw -m claude_hub.collector.cli run --interval 300"
 ```
 
-This command has not been verified on Windows yet. Repositories inside WSL need their own collector inside WSL, with its own token.
+This command has not been verified on Windows yet. Repositories inside WSL need their own collector inside WSL, with its own token. `hub wsl-setup` installs it. Each collector reports only the worktrees of its own system.
+
+## Shortcuts on Windows
+
+`hub.bat` in the repository folder wraps the commands. It uses the right Python on each machine. Run `hub` without arguments for the full list.
+
+| Command | Effect |
+| --- | --- |
+| `hub collect` | Upload sessions, worktrees, and rules once |
+| `hub check` | Test the connection and the configuration |
+| `hub loop` | Upload every five minutes |
+| `hub config` | Open the collector configuration |
+| `hub wsl-setup` | Install or update the collector inside WSL |
+| `hub wsl-collect` | Upload from WSL once |
+| `hub token NAME` | Create the token for the machine `NAME` |
+| `hub ship "TEXT"` | Commit with the message `TEXT`, push, and deploy |
+| `hub deploy` | Install the last commit on the server |
+
+The server address and the container ID are set at the top of `hub.bat`.
 
 ## Worktree states
 

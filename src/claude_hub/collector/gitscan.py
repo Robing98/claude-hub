@@ -136,6 +136,16 @@ def _parse_worktree_list(text: str) -> list[dict[str, Any]]:
     return entries
 
 
+def _foreign(path: str) -> bool:
+    """True for a path of the other system: a Linux path seen from Windows, or the reverse.
+
+    A repository that is used from both Windows and WSL has worktrees of
+    both kinds. Each collector can only judge the ones of its own system.
+    """
+    is_drive = len(path) > 1 and path[1] == ":"
+    return path.startswith("/") if sys.platform == "win32" else is_drive
+
+
 def _native(path: str) -> str:
     # Git prints forward slashes on Windows. Report the form the OS uses, so
     # paths match the working directories in the transcripts.
@@ -181,6 +191,9 @@ def describe_repo(repo: Path) -> dict[str, Any] | None:
     worktrees = []
     for index, entry in enumerate(entries):
         if entry.get("bare") or "path" not in entry:
+            continue
+        if _foreign(entry["path"]):
+            # The collector on the other system reports this one.
             continue
         path = entry["path"]
         item: dict[str, Any] = {

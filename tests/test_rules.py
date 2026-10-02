@@ -97,3 +97,46 @@ def test_scan_repo(tmp_path: Path):
         ("rule", ".claude/rules/tests.md"), ("skill", ".claude/skills/release/SKILL.md"),
         ("claude_md", "frontend/CLAUDE.md"),
     }
+
+
+def test_find_imports():
+    from claude_hub.rules import find_imports
+
+    text = (
+        "See @CONVENTIONS.md and @docs/style guide.md for the rules.\n"
+        "Personal notes: @~/.claude/private.md\n"
+        "Mail robin@example.md.org or ping @robing98, package @scope/pkg.\n"
+        "Inline `@ignored.md` stays out.\n"
+        "```\n@fenced.md\n```\n"
+        "Again @CONVENTIONS.md, and a parent: @../shared/base.md.\n"
+    )
+    assert find_imports(text) == ["CONVENTIONS.md", "docs/style guide.md", "~/.claude/private.md",
+                                  "../shared/base.md"]
+
+
+def test_scan_repo_finds_neutral_files_and_imports(tmp_path: Path):
+    repo = tmp_path / "repo"
+    make(repo / "CLAUDE.local.md", "# Local\nFollow @CONVENTIONS.md and @docs/gate.md and @docs/missing.md.\n"
+                                   "Never read @../outside.md.\n")
+    make(repo / "CONVENTIONS.md", "# 1. Commits\nNo attribution.\n# 2. Tests\nRun the gate.\n")
+    make(repo / "docs" / "gate.md", "# Gate\nSee @deeper.md.\n")
+    make(repo / "docs" / "deeper.md", "# Deeper\ntext\n")
+    make(repo / "docs" / "unreferenced.md", "# Not an instruction file\n")
+    make(tmp_path / "outside.md", "# Outside the repository\n")
+    found = {(f["kind"], f["rel_path"]) for f in scan_repo(repo)}
+    assert found == {
+        ("claude_md", "CLAUDE.local.md"), ("conventions", "CONVENTIONS.md"),
+        ("import", "docs/gate.md"), ("import", "docs/deeper.md"),
+    }
+    conventions = next(f for f in scan_repo(repo) if f["kind"] == "conventions")
+    assert [i["heading"] for i in describe("conventions", "CONVENTIONS.md", conventions["content"])["items"]] == \
+        ["1. Commits", "2. Tests"]
+    assert describe("conventions", "CONVENTIONS.md", "x")["name"] == "CONVENTIONS.md"
+
+
+def test_import_cycles_end(tmp_path: Path):
+    make(tmp_path / "CLAUDE.md", "@a.md")
+    make(tmp_path / "a.md", "@b.md")
+    make(tmp_path / "b.md", "@a.md and @CLAUDE.md")
+    found = sorted(f["rel_path"] for f in scan_repo(tmp_path))
+    assert found == ["CLAUDE.md", "a.md", "b.md"]

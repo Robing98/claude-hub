@@ -10,10 +10,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
+from ..rules import find_imports
 from .gitscan import SKIP_DIRS
 
 MAX_BYTES = 512 * 1024
 NESTED_DEPTH = 4
+IMPORT_DEPTH = 4
+
+# Files in the repository root that hold instructions under a neutral name.
+# Claude Code does not load them by itself, but teams keep their rules there.
+ROOT_CONVENTIONS = {"conventions.md", "agents.md"}
 
 # Folder below the base, file pattern, kind.
 _FOLDERS = [
@@ -52,6 +58,42 @@ def _folder_files(base: Path, claude_dir: Path) -> Iterator[dict[str, Any]]:
                     yield entry
 
 
+def _with_imports(base: Path, files: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Add the files that CLAUDE.md files import with ``@path``.
+
+    Imports are followed only inside ``base``. A file elsewhere on the
+    machine is not read, even when an instruction file points to it.
+    """
+    known = {entry["rel_path"] for entry in files}
+    queue = [(entry, 1) for entry in files if entry["kind"] == "claude_md"]
+    root = base.resolve()
+    while queue:
+        source, depth = queue.pop(0)
+        folder = (base / source["rel_path"]).parent
+        for target in find_imports(source["content"]):
+            if target.startswith("~/"):
+                path = Path(target).expanduser()
+            else:
+                path = folder / target.replace("\\", "/")
+            try:
+                resolved = path.resolve()
+                rel = resolved.relative_to(root).as_posix()
+            except (OSError, ValueError):
+                continue
+            if rel in known:
+                continue
+            entry = _entry(root, resolved, "import")
+            if entry is None:
+                continue
+            entry["rel_path"] = rel
+            known.add(rel)
+            files.append(entry)
+            if depth < IMPORT_DEPTH:
+                # An imported file can import further files.
+                queue.append(({**entry, "kind": "claude_md"}, depth + 1))
+    return files
+
+
 def scan_user(config_dir: Path) -> list[dict[str, Any]]:
     """Instruction files of one Claude Code configuration directory."""
     files = []
@@ -59,7 +101,7 @@ def scan_user(config_dir: Path) -> list[dict[str, Any]]:
     if entry:
         files.append(entry)
     files.extend(_folder_files(config_dir, config_dir))
-    return files
+    return _with_imports(config_dir, files)
 
 
 def _nested_claude_md(root: Path) -> Iterator[Path]:
@@ -91,9 +133,17 @@ def scan_repo(root: Path) -> list[dict[str, Any]]:
         entry = _entry(root, root / name, "claude_md")
         if entry:
             files.append(entry)
+    try:
+        neutral = sorted(p for p in root.iterdir() if p.name.lower() in ROOT_CONVENTIONS)
+    except OSError:
+        neutral = []
+    for path in neutral:
+        entry = _entry(root, path, "conventions")
+        if entry:
+            files.append(entry)
     files.extend(_folder_files(root, root / ".claude"))
     for path in _nested_claude_md(root):
         entry = _entry(root, path, "claude_md")
         if entry:
             files.append(entry)
-    return files
+    return _with_imports(root, files)

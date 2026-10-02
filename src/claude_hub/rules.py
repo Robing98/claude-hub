@@ -14,7 +14,14 @@ _FENCE = re.compile(r"^\s*(```|~~~)")
 _KEY = re.compile(r"^([A-Za-z][\w-]*):\s*(.*)$")
 
 # Kinds whose files hold many independent rules. The others are one unit.
-SPLIT_KINDS = {"claude_md", "rule"}
+SPLIT_KINDS = {"claude_md", "rule", "conventions", "import"}
+
+# Kinds that are named after their file, extension included. Many of them
+# share a name (every CLAUDE.md), so copies are compared rule by rule.
+FILE_NAMED_KINDS = {"claude_md", "conventions", "import"}
+
+_IMPORT = re.compile(r"(?<![\w`@/])@((?:~/|\.{1,2}/)?[\w.\-/\\ ]*?[\w\-]\.md)\b")
+_INLINE_CODE = re.compile(r"`[^`\n]*`")
 
 
 def content_sha(text: str) -> str:
@@ -96,7 +103,7 @@ def describe(kind: str, rel_path: str, text: str) -> dict[str, Any]:
         parts = rel_path.replace("\\", "/").split("/")
         if kind == "skill" and len(parts) > 1:
             name = parts[-2]  # A skill is named after its folder.
-        elif kind == "claude_md":
+        elif kind in FILE_NAMED_KINDS:
             name = parts[-1]  # Keeps CLAUDE.md and CLAUDE.local.md apart.
         else:
             name = parts[-1].removesuffix(".md")
@@ -107,3 +114,25 @@ def describe(kind: str, rel_path: str, text: str) -> dict[str, Any]:
         "sha": content_sha(text),
         "items": items,
     }
+
+
+def find_imports(text: str) -> list[str]:
+    """Return the Markdown files that a CLAUDE.md pulls in with ``@path``.
+
+    Only ``.md`` targets count, so that mail addresses, user handles, and
+    package scopes are not mistaken for imports. Code is skipped.
+    """
+    _, body = split_frontmatter(text)
+    found: list[str] = []
+    in_fence = False
+    for line in body.splitlines():
+        if _FENCE.match(line):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        for match in _IMPORT.finditer(_INLINE_CODE.sub("", line)):
+            target = match.group(1).strip()
+            if target not in found:
+                found.append(target)
+    return found

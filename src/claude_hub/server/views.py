@@ -13,6 +13,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from ..remote import is_within
+from ..rules import FILE_NAMED_KINDS
 from ..transcript import iter_turns
 from . import projects as project_rules
 from . import store
@@ -343,6 +344,8 @@ def settings_page(request: Request, conn: sqlite3.Connection = Depends(get_conn)
 
 KIND_LABELS = {
     "claude_md": "CLAUDE.md",
+    "conventions": "Conventions",
+    "import": "Imported file",
     "rule": "Rule file",
     "skill": "Skill",
     "agent": "Subagent",
@@ -368,7 +371,7 @@ def load_rule_files(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     # CLAUDE.md shares its name, so those are compared rule by rule instead.
     groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for item in files:
-        if item["kind"] != "claude_md":
+        if item["kind"] not in FILE_NAMED_KINDS:
             groups.setdefault((item["kind"], item["name"].lower()), []).append(item)
     for item in files:
         others = [o for o in groups.get((item["kind"], item["name"].lower()), []) if o is not item]
@@ -405,7 +408,7 @@ def rule_file_page(file_id: int, request: Request, conn: sqlite3.Connection = De
     current = next((item for item in files if item["id"] == file_id), None)
     if current is None:
         raise HTTPException(404, "Unknown instruction file")
-    copies = [item for item in files if item is not current and item["kind"] != "claude_md"
+    copies = [item for item in files if item is not current and item["kind"] not in FILE_NAMED_KINDS
               and (item["kind"], item["name"].lower()) == (current["kind"], current["name"].lower())]
     by_id = {item["id"]: item for item in files}
     items = [dict(row) for row in conn.execute(
