@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% set active = "worktrees" %}
+{% block title %}Worktrees · Claude hub{% endblock %}
+{% block main %}
+<h1>Worktrees</h1>
+<p class="filters">
+  <a href="/worktrees"{% if not state %} class="on"{% endif %}>All</a>
+  {% for name in ("dirty", "unpushed", "missing", "merged", "stale", "idle", "active", "main") if counts[name] %}
+  <a href="/worktrees?state={{ name }}"{% if state == name %} class="on"{% endif %}>{{ name }} <span class="count">{{ counts[name] }}</span></a>
+  {% endfor %}
+</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>State</th><th>Project</th><th>Branch</th><th>Last commit</th><th class="num">Changed files</th><th class="num">Ahead / behind</th><th>Machine</th></tr></thead>
+  <tbody>
+  {% for wt in worktrees %}
+    <tr>
+      <td>{{ m.pill(wt.state) }}</td>
+      <td><a href="/projects/{{ wt.project_id }}">{{ wt.project_name }}</a></td>
+      <td><span class="mono">{{ wt.branch or "(detached)" }}</span><div class="sub" title="{{ wt.path }}">{{ wt.short_path }}</div></td>
+      <td><span title="{{ wt.last_commit_at or '' }}">{{ wt.last_commit_at | reltime }}</span><div class="sub">{{ wt.last_commit_subject or "" }}</div></td>
+      <td class="num">{{ wt.dirty_files or "" }}</td>
+      <td class="num">{% if wt.upstream %}{{ wt.ahead or 0 }} / {{ wt.behind or 0 }}{% else %}no upstream{% endif %}</td>
+      <td>{{ wt.machine }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="7" class="empty">No worktrees.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="hint">Merged means the branch is contained in the default branch. Squash merges are not detected yet.</p>
+{% endblock %}

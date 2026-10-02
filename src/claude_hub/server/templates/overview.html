@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% set active = "overview" %}
+{% block title %}Overview · Claude hub{% endblock %}
+{% block main %}
+<h1>Overview</h1>
+{% for ws in tree %}
+<section class="workspace">
+  <h2>{{ ws.name }} <span class="count">{{ ws.total }}</span></h2>
+  {% for cls in ws.classes %}
+  <h3>{{ cls.name }}</h3>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Project</th><th class="num">Sessions</th><th>In-flight</th><th>Machines</th><th>Last activity</th></tr></thead>
+    <tbody>
+    {% for p in cls.projects %}
+      <tr>
+        <td><a href="/projects/{{ p.id }}">{{ p.name }}</a>
+            {% if p.waiting %}<span class="pill waiting">{{ p.waiting }} waiting</span>{% endif %}
+            <div class="sub">{{ p.key | display_key }}</div></td>
+        <td class="num">{{ p.sessions }}</td>
+        <td>{{ m.state_counts(p.states) }}</td>
+        <td>{{ p.machines | sort | join(", ") }}</td>
+        <td class="nowrap" title="{{ p.last_activity or '' }}">{{ p.last_activity | reltime }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="empty">No projects yet.</p>
+  {% endfor %}
+</section>
+{% else %}
+<p class="empty">No workspaces yet. Create them under <a href="/settings">Settings</a>, then assign projects from the <a href="/inbox">Inbox</a>.</p>
+{% endfor %}
+{% endblock %}

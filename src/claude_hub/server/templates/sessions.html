@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% set active = "sessions" %}
+{% block title %}Sessions · Claude hub{% endblock %}
+{% block main %}
+<h1>Sessions</h1>
+<form method="get" action="/sessions" class="inline toolbar">
+  <input type="search" name="q" value="{{ q }}" placeholder="Title, prompt, or project" aria-label="Search sessions">
+  <button type="submit">Search</button>
+</form>
+{{ m.session_table(sessions) }}
+{% endblock %}

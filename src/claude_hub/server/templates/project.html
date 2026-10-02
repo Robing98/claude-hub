@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% set active = "overview" %}
+{% block title %}{{ project.name }} · Claude hub{% endblock %}
+{% block main %}
+<p class="crumbs">
+  {% if project.workspace %}<a href="/overview">{{ project.workspace }}</a>{% if project.class %} / {{ project.class }}{% endif %}
+  {% else %}<a href="/inbox">Inbox</a>{% endif %}
+</p>
+<h1>{{ project.name }}</h1>
+<p class="sub">{{ project.key | display_key }}</p>
+
+<div class="toolbar">
+  <form method="post" action="/projects/{{ project.id }}/assign" class="inline">
+    {{ m.target_select(targets, current_target) }}
+    {% if project.key.startswith("git:") %}
+    <label class="check"><input type="checkbox" name="owner_rule" value="1"> Rule for this owner</label>
+    {% endif %}
+    <button type="submit">Assign</button>
+  </form>
+  <form method="post" action="/projects/{{ project.id }}/rename" class="inline">
+    <input type="text" name="name" value="{{ project.name }}" aria-label="Project name">
+    <button type="submit">Rename</button>
+  </form>
+</div>
+
+{% if project.kind == "repo" %}
+<section>
+  <h2>Worktrees <span class="count">{{ worktrees | length }}</span></h2>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>State</th><th>Branch</th><th>Last commit</th><th class="num">Changed files</th><th class="num">Ahead / behind</th><th>Machine</th><th>Sessions</th></tr></thead>
+    <tbody>
+    {% for wt in worktrees %}
+      <tr>
+        <td>{{ m.pill(wt.state) }}</td>
+        <td><span class="mono">{{ wt.branch or "(detached)" }}</span><div class="sub" title="{{ wt.path }}">{{ wt.short_path }}</div></td>
+        <td><span title="{{ wt.last_commit_at or '' }}">{{ wt.last_commit_at | reltime }}</span><div class="sub">{{ wt.last_commit_subject or "" }}</div></td>
+        <td class="num">{{ wt.dirty_files or "" }}</td>
+        <td class="num">{% if wt.upstream %}{{ wt.ahead or 0 }} / {{ wt.behind or 0 }}{% else %}no upstream{% endif %}</td>
+        <td>{{ wt.machine }}</td>
+        <td>
+          {% for s in wt.sessions[:3] %}<div><a href="/sessions/{{ s.pk }}">{{ s.title or "(no prompt)" }}</a></div>{% endfor %}
+          {% if wt.sessions | length > 3 %}<div class="sub">and {{ wt.sessions | length - 3 }} more</div>{% endif %}
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="7" class="empty">No collector has reported a repository for this project.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endif %}
+
+<section>
+  <h2>Sessions <span class="count">{{ sessions | length }}</span></h2>
+  {{ m.session_table(sessions, show_project=False) }}
+</section>
+{% endblock %}

@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% set active = "now" %}
+{% block title %}Now · Claude hub{% endblock %}
+{% block main %}
+<h1>Now</h1>
+<p class="lead">Sessions from the last {{ recent_days }} days and in-flight work that needs a decision.</p>
+
+<section>
+  <h2>Waiting for you <span class="count">{{ groups.waiting | length }}</span></h2>
+  <p class="hint">The agent finished its turn or asked a question.</p>
+  {% if groups.waiting %}
+  <ul class="cards">
+    {% for s in groups.waiting %}
+    <li>
+      <a class="card-title" href="/sessions/{{ s.pk }}">{{ s.title or "(no prompt)" }}</a>
+      <div class="meta">
+        {% if s.project_id %}<a href="/projects/{{ s.project_id }}">{{ s.project_name }}</a>{% else %}No project{% endif %}
+        {% if s.git_branch %}<span class="mono">{{ s.git_branch }}</span>{% endif %}
+        <span>{{ s.machine }}</span>
+        {% if s.last_event == "tool_call" %}<span class="pill waiting">question</span>{% endif %}
+        <span title="{{ s.ended_at }}">{{ s.ended_at | reltime }}</span>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="empty">Nothing waits for you.</p>
+  {% endif %}
+</section>
+
+<section>
+  <h2>Running <span class="count">{{ groups.running | length }}</span></h2>
+  {% if groups.running %}{{ m.session_table(groups.running) }}{% else %}<p class="empty">No session reported activity in the last minutes.</p>{% endif %}
+</section>
+
+{% if groups.paused %}
+<section>
+  <h2>Stopped mid-turn <span class="count">{{ groups.paused | length }}</span></h2>
+  <p class="hint">Interrupted, crashed, or held by a permission prompt. The transcript does not say which.</p>
+  {{ m.session_table(groups.paused) }}
+</section>
+{% endif %}
+
+<section>
+  <h2>In-flight work</h2>
+  {% if attention %}
+  <ul class="cards">
+    {% for entry in attention %}
+    <li>
+      <a class="card-title" href="/projects/{{ entry.project_id }}">{{ entry.name }}</a>
+      <div class="meta">{{ m.state_counts(entry.states) }}</div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="empty">No worktree has unsaved or unpushed work.</p>
+  {% endif %}
+  {% if removable or stale %}
+  <p class="hint">
+    {% if removable %}<a href="/worktrees?state=merged">Merged worktrees: {{ removable }}</a>. They can be removed.{% endif %}
+    {% if stale %}<a href="/worktrees?state=stale">Stale worktrees: {{ stale }}</a>. Decide whether to continue or drop them.{% endif %}
+  </p>
+  {% endif %}
+</section>
+{% endblock %}

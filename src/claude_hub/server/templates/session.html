@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% set active = "sessions" %}
+{% block title %}{{ session.title or "Session" }} · Claude hub{% endblock %}
+{% block main %}
+<p class="crumbs">{% if session.project_id %}<a href="/projects/{{ session.project_id }}">{{ session.project_name }}</a>{% else %}<a href="/sessions">Sessions</a>{% endif %}</p>
+<h1>{{ session.title or "(no prompt)" }}</h1>
+<dl class="facts">
+  <div><dt>Status</dt><dd>{{ m.pill(session.status) }}</dd></div>
+  <div><dt>Machine</dt><dd>{{ session.machine }}</dd></div>
+  <div><dt>Account</dt><dd>{{ session.account or "" }}</dd></div>
+  <div><dt>Branch</dt><dd class="mono">{{ session.git_branch or "" }}</dd></div>
+  <div><dt>Started</dt><dd title="{{ session.started_at or '' }}">{{ session.started_at | reltime }}</dd></div>
+  <div><dt>Last activity</dt><dd title="{{ session.ended_at or '' }}">{{ session.ended_at | reltime }}</dd></div>
+  <div><dt>Prompts</dt><dd>{{ session.user_prompts }}</dd></div>
+  <div><dt>Tool calls</dt><dd>{{ session.tool_calls }}</dd></div>
+  <div><dt>Source</dt><dd>{{ session.entrypoint or "" }} {{ session.cc_version or "" }}</dd></div>
+  <div><dt>Models</dt><dd>{{ session.models or "" }}</dd></div>
+</dl>
+<p class="sub">Directory: <span class="mono">{{ session.cwd or "" }}</span> · Session ID: <span class="mono">{{ session.session_id }}</span></p>
+
+{% if hidden %}
+<p class="notice">Showing the last {{ turns | length }} turns. <a href="?all=1">Show all {{ turns | length + hidden }} turns</a>.</p>
+{% endif %}
+
+<div class="turns">
+{% for turn in turns %}
+  {% if turn.role == "user" %}
+  <article class="turn user">
+    <h2>You <span class="sub" title="{{ turn.ts or '' }}">{{ turn.ts | reltime }}</span></h2>
+    <div class="text">{{ turn.text }}</div>
+  </article>
+  {% else %}
+  <article class="turn assistant">
+    <h2>Claude <span class="sub" title="{{ turn.ts or '' }}">{{ turn.ts | reltime }}</span></h2>
+    {% for part in turn.parts %}
+      {% if part.kind == "text" %}
+      <div class="text">{{ part.text }}</div>
+      {% else %}
+      <details class="tool{% if part.error %} error{% endif %}">
+        <summary>{{ part.name }}{% if part.error %} (error){% endif %}</summary>
+        <pre>{{ part.input }}</pre>
+        {% if part.result %}<pre class="result">{{ part.result }}</pre>{% endif %}
+      </details>
+      {% endif %}
+    {% endfor %}
+  </article>
+  {% endif %}
+{% else %}
+  <p class="empty">The transcript has no readable turns.</p>
+{% endfor %}
+</div>
+{% endblock %}

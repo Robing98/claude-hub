@@ -1,0 +1,18 @@
+# Claude hub collector configuration.
+
+# Address of the hub server, reachable from this machine (for example over the VPN).
+server_url = "http://hub.example.internal:8787"
+
+# Token from `claude-hub token add MACHINE` on the server. It identifies this machine.
+token = "PASTE_TOKEN_HERE"
+
+# Folders that contain Git repositories. The collector reports every repository
+# and worktree below them. Repositories that sessions ran in are found without this.
+scan_roots = []
+scan_depth = 4
+
+# One entry per Claude Code account on this machine. Each account has its own
+# configuration directory (CLAUDE_CONFIG_DIR). The label is free text.
+[[accounts]]
+label = "default"
+config_dir = "~/.claude"

@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% set active = "settings" %}
+{% block title %}Settings · Claude hub{% endblock %}
+{% block main %}
+<h1>Settings</h1>
+
+<section>
+  <h2>Workspaces and classes</h2>
+  {% for ws in workspaces %}
+  <div class="box">
+    <div class="boxhead">
+      <strong>{{ ws.name }}</strong>
+      <form method="post" action="/settings/workspaces/{{ ws.id }}/delete" class="inline">
+        <button type="submit" class="quiet">Delete workspace</button>
+      </form>
+    </div>
+    <ul class="plain">
+      {% for cls in ws.classes %}
+      <li>{{ cls.name }}
+        <form method="post" action="/settings/classes/{{ cls.id }}/delete" class="inline">
+          <button type="submit" class="quiet">Delete</button>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+    <form method="post" action="/settings/classes" class="inline">
+      <input type="hidden" name="workspace_id" value="{{ ws.id }}">
+      <input type="text" name="name" placeholder="New class" aria-label="New class in {{ ws.name }}" required>
+      <button type="submit">Add class</button>
+    </form>
+  </div>
+  {% endfor %}
+  <form method="post" action="/settings/workspaces" class="inline">
+    <input type="text" name="name" placeholder="New workspace" aria-label="New workspace" required>
+    <button type="submit">Add workspace</button>
+  </form>
+  <p class="hint">Deleting a workspace returns its projects to the inbox. It deletes no sessions.</p>
+</section>
+
+<section>
+  <h2>Rules</h2>
+  <p class="hint">The first matching rule assigns a project. A manual assignment always wins. Patterns use <code>*</code> as a wildcard, for example <code>github.com/robing98/*</code> for a remote or <code>d:/uni/*</code> for a path.</p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Field</th><th>Pattern</th><th>Target</th><th></th></tr></thead>
+    <tbody>
+    {% for rule in rules %}
+      <tr>
+        <td>{{ rule.field }}</td>
+        <td class="mono">{{ rule.pattern }}</td>
+        <td>{{ rule.workspace }}{% if rule.class %} / {{ rule.class }}{% endif %}</td>
+        <td><form method="post" action="/settings/rules/{{ rule.id }}/delete" class="inline"><button type="submit" class="quiet">Delete</button></form></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" class="empty">No rules yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% if targets %}
+  <form method="post" action="/settings/rules" class="inline">
+    <select name="field" aria-label="Rule field"><option value="remote">remote</option><option value="path">path</option></select>
+    <input type="text" name="pattern" placeholder="host/owner/*" aria-label="Pattern" required>
+    <select name="target" aria-label="Target" required>
+      {% for value, label in targets %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+    </select>
+    <button type="submit">Add rule</button>
+  </form>
+  <form method="post" action="/settings/rules/apply" class="inline"><button type="submit" class="quiet">Apply rules again</button></form>
+  {% endif %}
+</section>
+
+<section>
+  <h2>Machines</h2>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Machine</th><th>User</th><th>Platform</th><th class="num">Sessions</th><th class="num">Repositories</th><th>Last report</th></tr></thead>
+    <tbody>
+    {% for machine in machines %}
+      <tr><td>{{ machine.name }}</td><td>{{ machine.user }}</td><td>{{ machine.platform or "" }}</td>
+          <td class="num">{{ machine.sessions }}</td><td class="num">{{ machine.repos }}</td>
+          <td title="{{ machine.last_seen or '' }}">{{ (machine.last_seen | reltime) or "never" }}</td></tr>
+    {% else %}
+      <tr><td colspan="6" class="empty">No machines. Create a token with <code>claude-hub token add MACHINE</code>.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section>
+  <h2>Accounts</h2>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Account</th><th>User</th><th class="num">Sessions</th></tr></thead>
+    <tbody>
+    {% for account in accounts %}
+      <tr><td>{{ account.label }}</td><td>{{ account.user }}</td><td class="num">{{ account.sessions }}</td></tr>
+    {% else %}
+      <tr><td colspan="3" class="empty">Accounts appear with the first upload.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endblock %}

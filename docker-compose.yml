@@ -1,0 +1,15 @@
+services:
+  hub:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    environment:
+      # Optional password for the web view. Collectors use their own tokens.
+      HUB_UI_USER: ${HUB_UI_USER:-hub}
+      HUB_UI_PASSWORD: ${HUB_UI_PASSWORD:-}
+    volumes:
+      - hub-data:/data
+
+volumes:
+  hub-data:

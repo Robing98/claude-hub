@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Claude hub{% endblock %}</title>
+  <link rel="stylesheet" href="/static/hub.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/">Claude hub</a>
+  <nav aria-label="Main">
+    {% set pages = [("now", "/", "Now"), ("overview", "/overview", "Overview"), ("inbox", "/inbox", "Inbox"),
+                    ("worktrees", "/worktrees", "Worktrees"), ("sessions", "/sessions", "Sessions"),
+                    ("settings", "/settings", "Settings")] %}
+    {% for key, href, label in pages %}
+      <a href="{{ href }}"{% if active == key %} class="on" aria-current="page"{% endif %}>{{ label }}
+        {%- if key == "inbox" and nav.inbox_count %} <span class="count">{{ nav.inbox_count }}</span>{% endif %}</a>
+    {% endfor %}
+  </nav>
+</header>
+<main>
+{% block main %}{% endblock %}
+</main>
+</body>
+</html>

@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+# Runtime data and local configuration contain transcripts and tokens.
+data/
+.env
+collector.toml

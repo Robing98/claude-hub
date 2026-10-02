@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% set active = "inbox" %}
+{% block title %}Inbox · Claude hub{% endblock %}
+{% block main %}
+<h1>Inbox <span class="count">{{ projects | length }}</span></h1>
+<p class="lead">Projects that no rule has sorted yet. Assign one, and optionally keep the choice as a rule for all repositories of the same owner.</p>
+{% if not targets %}
+<p class="notice">Create a workspace under <a href="/settings">Settings</a> first.</p>
+{% endif %}
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Project</th><th class="num">Sessions</th><th>In-flight</th><th>Last activity</th><th>Assign</th></tr></thead>
+  <tbody>
+  {% for p in projects %}
+    <tr>
+      <td><a href="/projects/{{ p.id }}">{{ p.name }}</a><div class="sub">{{ p.key | display_key }}</div></td>
+      <td class="num">{{ p.sessions }}</td>
+      <td>{{ m.state_counts(p.states) }}</td>
+      <td class="nowrap">{{ p.last_activity | reltime }}</td>
+      <td>
+        <form method="post" action="/projects/{{ p.id }}/assign" class="inline">
+          {{ m.target_select(targets) }}
+          {% if p.key.startswith("git:") %}
+          <label class="check"><input type="checkbox" name="owner_rule" value="1"> Rule for this owner</label>
+          {% endif %}
+          <button type="submit">Assign</button>
+        </form>
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="5" class="empty">The inbox is empty.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

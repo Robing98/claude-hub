@@ -1,0 +1,47 @@
+{% macro pill(state) %}<span class="pill {{ state }}">{{ state }}</span>{% endmacro %}
+
+{% macro state_counts(states, project_id=None) %}
+  {% for state in ("dirty", "unpushed", "missing", "merged", "stale", "active", "idle") if states[state] %}
+    <span class="pill {{ state }}">{{ states[state] }} {{ state }}</span>
+  {% endfor %}
+{% endmacro %}
+
+{% macro session_table(sessions, show_project=True) %}
+<div class="tablewrap">
+<table>
+  <thead>
+    <tr>
+      <th>Status</th><th>Session</th>{% if show_project %}<th>Project</th>{% endif %}
+      <th>Branch</th><th>Machine</th><th>Account</th><th class="num">Prompts</th><th>Last activity</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for s in sessions %}
+    <tr>
+      <td>{{ pill(s.status) }}</td>
+      <td><a href="/sessions/{{ s.pk }}">{{ s.title or "(no prompt)" }}</a></td>
+      {% if show_project %}
+      <td>{% if s.project_id %}<a href="/projects/{{ s.project_id }}">{{ s.project_name }}</a>{% endif %}</td>
+      {% endif %}
+      <td class="mono">{{ s.git_branch or "" }}</td>
+      <td>{{ s.machine }}</td>
+      <td>{{ s.account or "" }}</td>
+      <td class="num">{{ s.user_prompts }}</td>
+      <td class="nowrap" title="{{ s.ended_at or '' }}">{{ s.ended_at | reltime }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="8" class="empty">No sessions.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endmacro %}
+
+{% macro target_select(targets, current="") %}
+<select name="target" aria-label="Workspace or class">
+  <option value="">Not assigned</option>
+  {% for value, label in targets %}
+    <option value="{{ value }}"{% if value == current %} selected{% endif %}>{{ label }}</option>
+  {% endfor %}
+</select>
+{% endmacro %}
