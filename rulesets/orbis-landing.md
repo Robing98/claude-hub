@@ -37,6 +37,12 @@ hand:
    its branch and holds its fast-forward until the row clears. One exception: a
    claim row may land during a hold, because a lane that cannot say what it is
    taking is worse than a code branch crossing one line of `docs/board.md`.
+   That exception is only reachable from a branch of its own. A claim committed on
+   top of held work cannot be fast-forwarded without the work under it, and a
+   fast-forward to a ref takes every commit below it: on 2026-10-02 that landed two
+   held design rounds during a code hold, twice, from a command that named the claim
+   and meant it. So a claim made during a hold is committed on a branch cut from
+   main, landed from there, and the working branch rebases onto it.
 3. The code round releases the row as its branch lands, so the window lasts no
    longer than the round.
 
