@@ -175,3 +175,6 @@ pre.result { background: var(--rule-soft); }
 details.box summary { cursor: pointer; font-weight: 600; }
 button:disabled { opacity: .4; cursor: default; }
 textarea { width: 100%; max-width: 60rem; font-family: var(--mono); font-size: .85rem; padding: .5rem .6rem; border: 1px solid var(--rule); border-radius: 4px; background: var(--surface); color: var(--ink); }
+.steps { margin: .4rem 0; padding-left: 1.4rem; max-width: 60rem; }
+.steps li { margin: .35rem 0; }
+pre.code { border: 1px solid var(--rule); border-radius: 4px; background: var(--surface); margin: .4rem 0; max-width: 60rem; color: var(--ink); }

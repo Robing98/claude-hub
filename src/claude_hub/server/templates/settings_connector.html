@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% set active = "settings" %}
+{% block title %}Cowork connector · Claude hub{% endblock %}
+{% block main %}
+<h1>Settings</h1>
+{{ m.settings_tabs("connector") }}
+
+<p class="lead">Cowork cannot run the session hook of Claude Code. The connector gives a Cowork chat the same rules: a small local MCP server that the Claude desktop app starts on your computer. It asks this hub on behalf of the chat.</p>
+
+<section>
+  <h2>State</h2>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Machine</th><th>Platform</th><th>Collector last report</th><th>Connector last used</th></tr></thead>
+    <tbody>
+    {% for machine in machines %}
+      <tr>
+        <td>{{ machine.name }}</td>
+        <td>{{ machine.platform or "" }}</td>
+        <td title="{{ machine.last_seen or '' }}">{{ (machine.last_seen | reltime) or "never" }}</td>
+        <td title="{{ machine.connector_seen or '' }}">{% if machine.connector_seen %}<span class="pill merged">works</span> {{ machine.connector_seen | reltime }}{% else %}not yet{% endif %}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" class="empty">No machines yet. Set up a collector first.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="hint">"Connector last used" is the last time a chat fetched rules through the connector of that machine. It is the proof that the setup works.</p>
+</section>
+
+<section>
+  <h2>Before you start</h2>
+  <ul class="steps">
+    <li>The Claude desktop app is installed on the computer.</li>
+    <li>The collector runs on the same computer: <code>hub check</code> prints "Connected". The connector uses the collector configuration, so it needs no address or token of its own.</li>
+    <li>The project has <strong>Sessions get their rules from the hub</strong> turned on. For a project where it is off, the connector answers that the project keeps its own rule files.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Set up</h2>
+  <ol class="steps">
+    <li>In the hub repository, run:
+      <pre class="code">hub mcp-install</pre>
+      The command adds the entry <code>{{ server_name }}</code> to the configuration of the desktop app and keeps a backup beside the file.</li>
+    <li>Quit the Claude desktop app completely, then start it again. Closing the window is not enough: on Windows, select <strong>Quit</strong> in the menu of the tray icon.</li>
+    <li>Start a new Cowork chat that is linked to this computer. Ask it:
+      <pre class="code">Call hub_rules for the folder D:\dev\claude-hub and tell me which rule sets you got.</pre>
+      Use a folder of a project that has hub rules turned on.</li>
+    <li>Reload this page. The machine shows "works" under <strong>Connector last used</strong>.</li>
+  </ol>
+  <p class="hint">Repeat the steps on every computer where you use Cowork. A chat that started before the restart does not get the tools.</p>
+</section>
+
+<section>
+  <h2>What a chat gets</h2>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Tool</th><th>What it does</th><th>Input</th></tr></thead>
+    <tbody>
+    {% for tool in tools %}
+      <tr>
+        <td class="mono">{{ tool.name }}</td>
+        <td>{{ tool.description }}</td>
+        <td class="mono">{{ tool.inputSchema.required | join(", ") }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="hint">The connector also tells each chat how to use the tools:</p>
+  <div class="turns"><article class="turn"><div class="text">{{ instructions }}</div></article></div>
+  <p class="hint">A rule proposal from a chat changes nothing. It waits for you under <a href="/proposals">Rule proposals</a>.</p>
+</section>
+
+<section>
+  <h2>Set up by hand</h2>
+  <p class="hint">Use this when <code>hub mcp-install</code> cannot find the configuration file. In the desktop app, open <strong>Settings</strong> &gt; <strong>Developer</strong> &gt; <strong>Edit Config</strong>, and add the entry to <code>mcpServers</code>. Replace <code>PYTHON_PATH</code> with the full path of the Python that has the collector, for example <code>D:\\dev\\claude-hub\\.venv\\Scripts\\python.exe</code>. In JSON, write each backslash twice.</p>
+  <pre class="code">{{ entry }}</pre>
+  <ul class="steps">
+    <li>Windows: <code>%APPDATA%\Claude\claude_desktop_config.json</code></li>
+    <li>macOS: <code>~/Library/Application Support/Claude/claude_desktop_config.json</code></li>
+  </ul>
+</section>
+
+<section>
+  <h2>If it does not work</h2>
+  <ul class="steps">
+    <li><strong>The chat has no hub tools:</strong> Quit the desktop app completely and start it again, then start a new chat. Check that the chat is linked to the computer.</li>
+    <li><strong>The connector does not start:</strong> Read <code>%APPDATA%\Claude\logs\mcp-server-{{ server_name }}.log</code>. It holds what the connector printed. <code>mcp.log</code> in the same folder holds the connection attempts of the app.</li>
+    <li><strong>"The hub is not reachable":</strong> Run <code>hub check</code> on that computer. The connector reaches the hub only where the computer does, so away from home it needs the VPN.</li>
+    <li><strong>You moved the repository or its virtual environment:</strong> Run <code>hub mcp-install</code> again. The entry holds the path of Python.</li>
+    <li><strong>hub_rules returns no rules:</strong> Turn on <strong>Sessions get their rules from the hub</strong> on the project page.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Remove</h2>
+  <pre class="code">hub mcp-remove</pre>
+  <p class="hint">Then quit the desktop app and start it again.</p>
+</section>
+{% endblock %}

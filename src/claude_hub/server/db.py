@@ -254,8 +254,14 @@ CREATE TABLE rule_proposals (
 CREATE INDEX rule_proposals_status ON rule_proposals(status);
 """
 
+# When the local connector of a machine last fetched rules. The settings page
+# shows it, so that a setup can be checked without guessing.
+CONNECTOR_SCHEMA = """
+ALTER TABLE machines ADD COLUMN connector_seen TEXT;
+"""
+
 MIGRATIONS = [SCHEMA, RULES_SCHEMA, WORK_DIRS_SCHEMA, AI_SWITCH_SCHEMA, HUB_RULES_SCHEMA,
-              USAGE_SCHEMA, ORGANIZE_SCHEMA, PROPOSALS_SCHEMA]
+              USAGE_SCHEMA, ORGANIZE_SCHEMA, PROPOSALS_SCHEMA, CONNECTOR_SCHEMA]
 
 
 def init(data_dir: Path) -> None:

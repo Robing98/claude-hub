@@ -37,6 +37,13 @@
 </div>
 {% endmacro %}
 
+{% macro settings_tabs(current) %}
+<p class="filters" role="navigation" aria-label="Settings sections">
+  <a href="/settings"{% if current == "general" %} class="on" aria-current="page"{% endif %}>General</a>
+  <a href="/settings/connector"{% if current == "connector" %} class="on" aria-current="page"{% endif %}>Cowork connector (MCP)</a>
+</p>
+{% endmacro %}
+
 {% macro target_select(targets, current="") %}
 <select name="target" aria-label="Workspace or class">
   <option value="">Not assigned</option>

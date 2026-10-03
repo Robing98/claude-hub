@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import difflib
+import json
 import sqlite3
 from collections import Counter
 from datetime import timedelta
@@ -13,6 +14,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 
+from ..collector import mcp_server
 from ..remote import is_within
 from ..rules import FILE_NAMED_KINDS
 from ..rulesets import applies, build_briefing, parse_ruleset, split_file, valid_name, with_addition, with_body
@@ -452,6 +454,20 @@ def settings_page(request: Request, conn: sqlite3.Connection = Depends(get_conn)
     ).fetchall()
     return render(request, conn, "settings.html", workspaces=workspaces, rules=rules,
                   machines=machines, accounts=accounts, targets=targets(conn))
+
+
+@router.get("/settings/connector")
+def connector_page(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    """How to set up the local connector, with what the hub knows about its use."""
+    machines = conn.execute(
+        "SELECT name, platform, last_seen, connector_seen FROM machines ORDER BY name").fetchall()
+    # The entry that "mcp install" writes, with a placeholder for the one
+    # value that differs per machine.
+    entry = {"mcpServers": {mcp_server.SERVER_NAME: {
+        "command": "PYTHON_PATH", "args": ["-m", "claude_hub.collector.cli", "mcp"]}}}
+    return render(request, conn, "settings_connector.html", machines=machines,
+                  tools=mcp_server.TOOLS, instructions=mcp_server.INSTRUCTIONS,
+                  server_name=mcp_server.SERVER_NAME, entry=json.dumps(entry, indent=2))
 
 
 KIND_LABELS = {

@@ -134,6 +134,8 @@ Cowork cannot run the session hook. It gets the rules through a local connector 
 
 The connector runs on your computer, so it reaches the hub only while that computer reaches it.
 
+The hub shows these steps, the tools, and what to check when something fails under **Settings** > **Cowork connector (MCP)**. That page also shows when the connector of each machine last fetched rules.
+
 ### Rules as files, outside Git
 
 For a tool that has neither the hook nor the connector, export the rules into the project folder:

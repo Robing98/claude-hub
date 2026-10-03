@@ -288,6 +288,13 @@ def test_local_connector_serves_rules_and_files_proposals(tmp_path, live_server,
     page = client.get("/proposals").text
     assert "Keep art at native size." in page and "Demo design lane" in page
 
+    # The settings page shows that the connector of this machine works.
+    setup = client.get("/settings/connector")
+    assert setup.status_code == 200 and "built-in method" not in setup.text
+    assert "hub mcp-install" in setup.text and "hub_propose_rule" in setup.text
+    assert "works" in setup.text and "PYTHON_PATH" in setup.text
+    assert "Cowork connector (MCP)" in client.get("/settings").text
+
     # A project that still keeps its own rule files says so instead of returning rules.
     conn = db.connect(client.app.state.data_dir)
     conn.execute("UPDATE projects SET hub_rules = 0")
@@ -297,6 +304,18 @@ def test_local_connector_serves_rules_and_files_proposals(tmp_path, live_server,
     assert off["isError"] is False and "keeps its rules in its own files" in off["content"][0]["text"]
     down = Config(server_url="http://127.0.0.1:9", token=TOKEN, accounts=[])
     assert talk(down, tmp_path / "cache", call(1, "hub_rules", folder=str(checkout)))[0]["result"]["isError"] is True
+
+
+def test_only_the_connector_marks_a_machine_as_connected(client, data_dir, demo):
+    assert "not yet" in client.get("/settings/connector").text
+    client.get("/api/v1/briefing", params={"remote": REMOTE, "v": 2})       # the session hook
+    conn = db.connect(data_dir)
+    assert conn.execute("SELECT connector_seen FROM machines").fetchone()[0] is None
+    client.get("/api/v1/briefing", params={"remote": REMOTE, "channel": "mcp", "v": 2})
+    assert conn.execute("SELECT connector_seen FROM machines").fetchone()[0]
+    conn.close()
+    page = client.get("/settings/connector").text
+    assert "not yet" not in page and "works" in page
 
 
 def test_connector_install_keeps_other_servers(tmp_path):

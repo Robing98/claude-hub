@@ -438,6 +438,9 @@ def get_briefing(
 ) -> dict:
     """Return the rules for a session that starts in ``cwd``."""
     project = _session_project(conn, machine, cwd, remote, repo_root)
+    if channel == "mcp":
+        conn.execute("UPDATE machines SET connector_seen = ? WHERE id = ?",
+                     (db.now_iso(), machine["id"]))
     conn.commit()
     if project and not project["hub_rules"]:
         # This project still keeps its rules in its own files. Sending hub
