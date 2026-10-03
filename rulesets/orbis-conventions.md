@@ -33,25 +33,19 @@ have a fixed height. Server tick is 20 Hz. Power is in integer energy units per
 tick; never floats. The world renders at 1x by default (a client setting with
 0.5x as the overview and 2x), 60 by 34 tiles on a 1080p screen; the UI has its own scale.
 
-**Comments.** Explain why, not what. A comment stating a non-obvious invariant is
-worth more than ten describing syntax.
-
-**Commit messages.** Description only. No AI attribution, no co-author trailers,
-no tool signatures. Imperative mood, present tense.
+**Commit messages.** Imperative mood, present tense. What a message must not
+carry is in the shared set "Commit and pull request texts".
 
 **Errors.** A malformed mod file must produce a readable message naming the file
 and the field, and must not crash the server. Assume every mod file is written by
 a human at 2am. A packet decoder must never throw on hostile input; it returns
 false and a reason.
 
-**Rules and their enforcement.** A rule ships with its check: a validator rule,
-a unit test, or a hook that fails loudly and names the rule in its failure text.
-A rule that cannot be checked says so where it is stated and is review duty.
-Nothing in between; a rule kept by memory decays and then needs a sweep.
+**Rules and their enforcement.** A rule ships with its check. The rule is in
+the shared set "Verification".
 
-**Prose.** No em-dashes anywhere a person reads: docs, data, locale, comments,
-commit messages. A comma, a colon, or a full stop does the job.
-`tools/check_prose.py` refuses them.
+**Prose.** `tools/check_prose.py` refuses em-dashes. The rule is in the shared
+set "Working with Robin".
 
 **Generated schemas.** `docs/schema/` is written by
 `python tools/gen_schemas.py` from the loaders, so a schema cannot describe a
@@ -78,9 +72,3 @@ exactly one of three: promoted (solved, the file names the doc and goes),
 closed (won't fix, the file says why and stays), or open with a new date.
 `tools/check_docs.py` refuses an open question without a revisit date or
 with one that has passed; `docs/board.md` lists them all under Deferred.
-
-**What Robin has to decide goes at the end, as a list.** Every answer to him
-ends with a short, scannable list of what he has to decide or answer, and
-nothing that needs his word is left buried in the prose above it. An answer
-with nothing open says so in one line, or leaves the list out. This holds for
-both lanes, Cowork and Code.

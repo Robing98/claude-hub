@@ -49,8 +49,13 @@ def since_day(days: int) -> str:
     return (utcnow() - timedelta(days=days - 1)).strftime("%Y-%m-%d")
 
 
-def report(conn: sqlite3.Connection, prices: Prices, days: int) -> dict[str, Any]:
-    """Totals for a period, split by project, workspace, model, and day."""
+def report(conn: sqlite3.Connection, prices: Prices, days: int,
+           mask: dict[int, str] | None = None) -> dict[str, Any]:
+    """Totals for a period, split by project, workspace, model, and day.
+
+    ``mask`` replaces the names of projects that are hidden right now.
+    """
+    mask = mask or {}
     rows = conn.execute(
         f"""SELECT COALESCE(parent.project_id, s.project_id) AS project_id,
                    COALESCE(parent.pk, s.pk) AS root_pk, u.day, u.model,
@@ -94,7 +99,7 @@ def report(conn: sqlite3.Connection, prices: Prices, days: int) -> dict[str, Any
             archived_count += 1
             continue
         projects.append({**bucket, "id": project_id, "workspace": workspace,
-                         "name": info["name"] if info else "No project"})
+                         "name": mask.get(project_id) or (info["name"] if info else "No project")})
     if archived_count:
         projects.append({**archived, "id": None, "workspace": "",
                          "name": f"Archived projects ({archived_count})"})

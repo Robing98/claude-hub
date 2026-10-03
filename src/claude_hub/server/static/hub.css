@@ -178,3 +178,5 @@ textarea { width: 100%; max-width: 60rem; font-family: var(--mono); font-size: .
 .steps { margin: .4rem 0; padding-left: 1.4rem; max-width: 60rem; }
 .steps li { margin: .35rem 0; }
 pre.code { border: 1px solid var(--rule); border-radius: 4px; background: var(--surface); margin: .4rem 0; max-width: 60rem; color: var(--ink); }
+.top .privacy { margin-left: auto; }
+button.pressed { color: var(--amber); border-color: currentColor; background: var(--amber-bg); font-weight: 600; }

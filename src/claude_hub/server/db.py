@@ -260,8 +260,14 @@ CONNECTOR_SCHEMA = """
 ALTER TABLE machines ADD COLUMN connector_seen TEXT;
 """
 
+# A private project shows as "Project n" in the lists while the person has
+# the switch "Hide private projects" turned on in the browser.
+PRIVATE_SCHEMA = """
+ALTER TABLE projects ADD COLUMN private INTEGER NOT NULL DEFAULT 0;
+"""
+
 MIGRATIONS = [SCHEMA, RULES_SCHEMA, WORK_DIRS_SCHEMA, AI_SWITCH_SCHEMA, HUB_RULES_SCHEMA,
-              USAGE_SCHEMA, ORGANIZE_SCHEMA, PROPOSALS_SCHEMA, CONNECTOR_SCHEMA]
+              USAGE_SCHEMA, ORGANIZE_SCHEMA, PROPOSALS_SCHEMA, CONNECTOR_SCHEMA, PRIVATE_SCHEMA]
 
 
 def init(data_dir: Path) -> None:

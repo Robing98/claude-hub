@@ -7,7 +7,7 @@
   {% if project.workspace %}<a href="/overview">{{ project.workspace }}</a>{% if project.class %} / {{ project.class }}{% endif %}
   {% else %}<a href="/inbox">Inbox</a>{% endif %}
 </p>
-<h1>{{ project.name }}{% if project.archived %} <span class="pill">archived</span>{% endif %}</h1>
+<h1>{{ project.name }}{% if project.archived %} <span class="pill">archived</span>{% endif %}{% if project.private %} <span class="pill">private</span>{% endif %}</h1>
 <p class="sub">{{ project.key | display_key }}</p>
 
 <div class="toolbar">
@@ -32,6 +32,14 @@
     <button type="submit" class="quiet">Archive</button>
     {% endif %}
   </form>
+  <form method="post" action="/projects/{{ project.id }}/private" class="inline">
+    {% if project.private %}
+    <button type="submit" class="quiet">No longer private</button>
+    {% else %}
+    <input type="hidden" name="private" value="1">
+    <button type="submit" class="quiet">Mark as private</button>
+    {% endif %}
+  </form>
   {% if others %}
   <form method="post" action="/projects/{{ project.id }}/merge" class="inline">
     <label class="check" for="merge-target">Merge this project into</label>
@@ -43,6 +51,7 @@
   </form>
   {% endif %}
 </div>
+<p class="hint">Private: while "Hide private projects" is on in the top bar, the lists show this project as "Project n" and hide its paths, branches, and session titles. This page keeps the real name.</p>
 <p class="hint">Archive: the project leaves the overview, the inbox, the Now page, and the rule table. Its data stays, and its usage stays in the totals. Merge: sessions, worktrees, and instruction files move to the other project, and this page goes away. New uploads for this project then land in the other one.</p>
 {% if aliases %}
 <ul class="plain box">

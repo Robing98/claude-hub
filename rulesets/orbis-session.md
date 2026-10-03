@@ -25,7 +25,7 @@ commit or the one before it; the design side commits its own deploys as
 they land, so the tree is never carrying weeks of uncommitted design.
 
 **Sessions.** One hand-off entry per session, and the session starts with
-this file, the entry, and the docs the entry names, nothing else. A session
+these rules, the entry, and the docs the entry names, nothing else. A session
 that has used two thirds of its context finishes the commit it is on,
 writes its round report (what landed with commit ids, what is open, what
 comes next), and stops; the next session starts fresh from the report and
@@ -55,7 +55,7 @@ round that edits main directly parks its changes in the one checkout every
 other round has to merge through, and then every merge collides with
 whichever of them the incoming branch happens to touch: on 2026-09-14 that
 cost three blocked merges, a stash pop that left conflict markers across the
-holder line, and a paragraph of this file that went missing between a commit
+holder line, and a paragraph of `CLAUDE.md` that went missing between a commit
 and a merge. Cutting from main also gives the gate its meaning back, because
 a red `check.bat` on a branch is then that branch's own fault rather than
 someone else's unfinished round.

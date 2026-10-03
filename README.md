@@ -8,6 +8,7 @@ Status: phase 1. See [the plan](docs/plan.md) for the goal, the design, and the 
 
 - **Now page:** sessions that wait for your reply, sessions that run, sessions that stopped mid-turn, and worktrees with unsaved or unpushed work.
 - **Hierarchy:** workspace > class > project. Rules assign projects by Git host and owner, or by path. Unmatched projects go to the inbox.
+- **Private projects:** mark projects as private and hide their names with one switch, for screenshots and screen shares.
 - **Order by hand:** pin projects to the top of their group and set their order, archive projects that are done, merge duplicates, and move a single session into another project.
 - **Sessions:** every Claude Code transcript, stored in full and readable in the browser.
 - **Worktrees:** one state per worktree: `dirty`, `unpushed`, `missing`, `stale`, `merged`, `idle`, `active`, or `main`.
@@ -160,6 +161,17 @@ The command writes `.claude-hub/RULES.md` and one file per on-demand set under `
 - **Archive:** On a project page, select **Archive**. The project leaves the overview, the inbox, the Now page, and the rule table. Its usage stays in the totals. The overview lists archived projects at the end, with **Restore**.
 - **Merge:** On the page of the duplicate, choose the project to keep and select **Merge**. Sessions, worktrees, and instruction files move over. Later uploads for the duplicate land in the kept project. **Separate again** on the kept project ends that.
 - **Move a session:** On a session page, choose a project and select **Move**. The session stays there, whatever the collector reports later. **Assign automatically** returns it to the rules.
+
+## Hide private projects
+
+For a screenshot or a screen share, some project names must not show.
+
+1. On the page of such a project, select **Mark as private**.
+2. In the top bar, select **Hide private projects**. The switch appears as soon as one project is private, and it applies to your browser only.
+
+While the switch is on, every list shows a private project as "Project n": the overview, usage, Now, sessions, worktrees, the rule tables, and the inbox. Its remote, paths, branch names, commit subjects, and session titles are hidden as well, and a search does not find its sessions. The number stays the same from page to page. The page of the project itself, and the page of one of its sessions, show everything.
+
+The status feed has no browser. Add `?hide=1` to its address to get the masked form.
 
 ## Usage and cost
 

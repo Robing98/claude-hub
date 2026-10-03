@@ -20,6 +20,12 @@
         {%- if key == "rules" and nav.proposal_count %} <span class="count">{{ nav.proposal_count }}</span>{% endif %}</a>
     {% endfor %}
   </nav>
+  {% if nav.private_count %}
+  <form method="post" action="/privacy" class="inline privacy">
+    <input type="hidden" name="hide" value="{{ '0' if nav.hiding else '1' }}">
+    <button type="submit" class="quiet{% if nav.hiding %} pressed{% endif %}" aria-pressed="{{ 'true' if nav.hiding else 'false' }}" title="{{ nav.private_count }} private project{{ 's' if nav.private_count != 1 else '' }}">Hide private projects: {{ "on" if nav.hiding else "off" }}</button>
+  </form>
+  {% endif %}
 </header>
 <main>
 {% block main %}{% endblock %}

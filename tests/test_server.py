@@ -598,3 +598,74 @@ def test_session_moved_by_hand_stays_where_it_was_put(client, data_dir):
     client.post(f"/sessions/{pk}/project", data={})
     upload(client, "s1", to_jsonl(lines), remote="github.com/robing98/auto", truncate=True)
     assert one(data_dir, "SELECT project_id FROM sessions WHERE pk = ?", pk)["project_id"] == auto
+
+
+HIDDEN_ROW = "(hidden)"
+
+
+def test_private_projects_are_masked_while_the_switch_is_on(client, data_dir):
+    client.post("/settings/workspaces", data={"name": "GolleIT"})
+    client.put("/api/v1/inventory", json={"repos": [
+        {"path": "D:\\work\\secret-shop", "remote": "git.example.com/client/secret-shop",
+         "worktrees": [{"path": "D:\\work\\secret-shop", "is_main": True, "branch": "feature/coupon-engine",
+                        "last_commit_subject": "Add the coupon engine", "dirty_files": 2}]},
+        {"path": "D:\\dev\\open", "remote": "github.com/robing98/open",
+         "worktrees": [{"path": "D:\\dev\\open", "is_main": True, "branch": "main"}]}]})
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    upload(client, "s-secret", to_jsonl(make_lines("s-secret", "D:\\work\\secret-shop", ["Build coupons"], start=now[:-1])),
+           remote="git.example.com/client/secret-shop")
+    upload(client, "s-open", to_jsonl(make_lines("s-open", "D:\\dev\\open", ["Open work"], start=now[:-1])),
+           remote="github.com/robing98/open")
+    client.put("/api/v1/rules", json={"sources": [{"scope": "project", "base_path": "D:\\work\\secret-shop",
+        "remote": "git.example.com/client/secret-shop",
+        "files": [{"rel_path": ".claude/skills/coupon-release/SKILL.md", "kind": "skill",
+                   "content": "---\nname: coupon-release\ndescription: Release the coupon engine\n---\nSteps"}]}]})
+    secret, visible = project_id(data_dir, "secret-shop"), project_id(data_dir, "open")
+    client.post(f"/projects/{secret}/assign", data={"target": "1"})
+    client.post("/api/v1/proposals", json={"ruleset": "x", "text": "y"})      # no sets here, ignored
+
+    pages = ("/", "/overview", "/sessions", "/worktrees", "/usage?days=0",
+             "/rulesets", "/rules", "/inbox", f"/projects/{visible}", "/sessions/2")
+    leaks = ("secret-shop", "coupon", "Title of s-secret", "git.example.com")
+
+    # Nothing is private yet: no switch, real names.
+    assert "Hide private projects" not in client.get("/").text
+    assert "secret-shop" in client.get("/overview").text
+
+    client.post(f"/projects/{secret}/private", data={"private": "1"})
+    # Marked, but the switch is off: still the real names, and the switch appears.
+    home = client.get("/overview").text
+    assert "secret-shop" in home and "Hide private projects: off" in home
+
+    assert client.post("/privacy", data={"hide": "1"}, follow_redirects=False).status_code == 303
+    for path in pages:
+        text = client.get(path).text
+        assert client.get(path).status_code == 200, path
+        for leak in leaks:
+            assert leak not in text, (path, leak)
+        assert "Hide private projects: on" in text, path
+    # A search must not find what is hidden. The page repeats the search word, so
+    # the check is that no row comes back.
+    found = client.get("/sessions?q=coupons").text
+    assert "Title of s-secret" not in found and HIDDEN_ROW not in found and "No sessions." in found
+    files = client.get("/rules?q=coupon").text
+    assert "coupon-release" not in files and "git.example.com" not in files and HIDDEN_ROW not in files
+    assert "Project 1" in client.get("/overview").text and "Project 1" in client.get("/usage?days=0").text
+    assert "Project 1" in client.get("/worktrees").text
+    assert ">open</a>" in client.get("/inbox").text          # a project that is not private keeps its name
+    assert "Title of s-open" in client.get("/sessions").text
+    # The page of the project itself keeps the real name.
+    own = client.get(f"/projects/{secret}").text
+    assert "secret-shop" in own and "private" in own and "No longer private" in own
+
+    feed = client.get("/status.json").json()
+    assert "secret" not in str(feed) and "Project 1: (hidden)" in feed["detail"]
+
+    # Switch off: everything is back. The feed can still ask for the masked form.
+    client.post("/privacy", data={})
+    assert "secret-shop" in client.get("/overview").text and "Title of s-secret" in client.get("/sessions").text
+    assert "secret-shop" in client.get("/status.json").json()["detail"]
+    assert "secret" not in str(client.get("/status.json?hide=1").json())
+    client.post(f"/projects/{secret}/private", data={})
+    assert "Hide private projects" not in client.get("/").text

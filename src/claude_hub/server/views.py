@@ -82,6 +82,28 @@ templates.env.filters["tokens"] = tokens
 templates.env.filters["usd"] = usd
 
 
+HIDE_COOKIE = "hub_hide"
+HIDDEN = "(hidden)"
+
+
+def hiding(request: Request) -> bool:
+    """True while this browser has "Hide private projects" turned on.
+
+    A feed that has no browser, such as the status feed, asks with ``?hide=1``.
+    """
+    return request.cookies.get(HIDE_COOKIE) == "1" or request.query_params.get("hide") == "1"
+
+
+def hidden_names(request: Request, conn: sqlite3.Connection) -> dict[int, str]:
+    """The stand-in names of private projects, or nothing while they are shown."""
+    if not hiding(request):
+        return {}
+    rows = conn.execute("SELECT id FROM projects WHERE private = 1 ORDER BY id").fetchall()
+    # The number follows the order in which the projects were first seen, so
+    # it stays the same from page to page.
+    return {row["id"]: f"Project {index}" for index, row in enumerate(rows, start=1)}
+
+
 def back(request: Request, conn: sqlite3.Connection, fallback: str = "/") -> RedirectResponse:
     """Commit the form's changes and return to the page it came from."""
     conn.commit()
@@ -89,7 +111,8 @@ def back(request: Request, conn: sqlite3.Connection, fallback: str = "/") -> Red
     return RedirectResponse(request.headers.get("referer") or fallback, status_code=303)
 
 
-def load_worktrees(conn: sqlite3.Connection, project_id: int | None = None) -> list[dict[str, Any]]:
+def load_worktrees(conn: sqlite3.Connection, project_id: int | None = None,
+                   mask: dict[int, str] | None = None) -> list[dict[str, Any]]:
     query = """
         SELECT w.*, r.project_id, r.path AS repo_path, r.default_branch, r.machine_id,
                m.name AS machine, p.name AS project_name, p.archived AS project_archived
@@ -110,6 +133,10 @@ def load_worktrees(conn: sqlite3.Connection, project_id: int | None = None) -> l
         # Inside the repository, the part below it is enough to recognize a worktree.
         inside = not row["is_main"] and is_within(row["path"], row["repo_path"])
         item["short_path"] = row["path"][len(row["repo_path"]):].lstrip("\\/") if inside else row["path"]
+        if mask and row["project_id"] in mask:
+            # Branch names, paths, and commit subjects say what a project is about.
+            item.update(project_name=mask[row["project_id"]], branch=HIDDEN, path=HIDDEN,
+                        short_path="", last_commit_subject="")
         result.append(item)
     # Newest first, then stable-sort so that work needing a decision leads.
     result.sort(key=lambda w: w["last_commit_at"] or "", reverse=True)
@@ -117,7 +144,8 @@ def load_worktrees(conn: sqlite3.Connection, project_id: int | None = None) -> l
     return result
 
 
-def load_sessions(conn: sqlite3.Connection, where: str = "", params: tuple = (), limit: int = 200):
+def load_sessions(conn: sqlite3.Connection, where: str = "", params: tuple = (), limit: int = 200,
+                  mask: dict[int, str] | None = None):
     now = utcnow()
     # Subagent transcripts are stored as sessions, but they are not listed.
     top_level = "s.parent_session_id IS NULL"
@@ -131,11 +159,15 @@ def load_sessions(conn: sqlite3.Connection, where: str = "", params: tuple = (),
     for row in rows:
         item = dict(row)
         item["status"] = session_status(row, now)
+        if mask and row["project_id"] in mask:
+            item.update(project_name=mask[row["project_id"]], title=HIDDEN, git_branch=None,
+                        cwd=None, first_prompt=None, last_prompt=None)
         result.append(item)
     return result
 
 
-def project_summaries(conn: sqlite3.Connection) -> dict[int, dict[str, Any]]:
+def project_summaries(conn: sqlite3.Connection,
+                      mask: dict[int, str] | None = None) -> dict[int, dict[str, Any]]:
     summaries: dict[int, dict[str, Any]] = {}
     for row in conn.execute("SELECT * FROM projects").fetchall():
         summaries[row["id"]] = {
@@ -173,6 +205,10 @@ def project_summaries(conn: sqlite3.Connection) -> dict[int, dict[str, Any]]:
         summary["machines"].add(wt["machine"])
         summary["states"][wt["state"]] += 1
         touch(summary, wt["last_commit_at"])
+    for project_id, label in (mask or {}).items():
+        if project_id in summaries:
+            # The key holds the remote or the path, which names the project as well.
+            summaries[project_id].update(name=label, key="git:hidden")
     return summaries
 
 
@@ -206,16 +242,18 @@ def parse_target(conn: sqlite3.Connection, target: str) -> tuple[int | None, int
     return workspace_id, class_id
 
 
-def nav(conn: sqlite3.Connection) -> dict[str, Any]:
+def nav(conn: sqlite3.Connection, request: Request) -> dict[str, Any]:
     inbox = conn.execute(
         "SELECT COUNT(*) FROM projects WHERE workspace_id IS NULL AND archived = 0").fetchone()[0]
     proposals = conn.execute(
         "SELECT COUNT(*) FROM rule_proposals WHERE status = 'pending'").fetchone()[0]
-    return {"inbox_count": inbox, "proposal_count": proposals}
+    private = conn.execute("SELECT COUNT(*) FROM projects WHERE private = 1").fetchone()[0]
+    return {"inbox_count": inbox, "proposal_count": proposals, "private_count": private,
+            "hiding": hiding(request)}
 
 
 def render(request: Request, conn: sqlite3.Connection, name: str, **context: Any):
-    return templates.TemplateResponse(request, name, {"nav": nav(conn), **context})
+    return templates.TemplateResponse(request, name, {"nav": nav(conn, request), **context})
 
 
 # --- pages -----------------------------------------------------------------
@@ -224,14 +262,15 @@ def render(request: Request, conn: sqlite3.Connection, name: str, **context: Any
 @router.get("/")
 def now_page(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     cutoff = (utcnow() - timedelta(days=RECENT_DAYS)).strftime("%Y-%m-%dT%H:%M:%S")
-    recent = [s for s in load_sessions(conn, "WHERE s.ended_at >= ?", (cutoff,), limit=500)
+    mask = hidden_names(request, conn)
+    recent = [s for s in load_sessions(conn, "WHERE s.ended_at >= ?", (cutoff,), limit=500, mask=mask)
               if not s["project_archived"]]
     groups = {status: [s for s in recent if s["status"] == status]
               for status in ("waiting", "running", "paused")}
 
     attention: dict[int, dict[str, Any]] = {}
     removable = stale = 0
-    for wt in load_worktrees(conn):
+    for wt in load_worktrees(conn, mask=mask):
         if wt["project_archived"]:
             continue
         if wt["state"] in ACTION_STATES:
@@ -257,12 +296,13 @@ STATUS_DETAIL_LENGTH = 200
 
 
 @router.get("/status.json")
-def status_json(conn: sqlite3.Connection = Depends(get_conn)) -> dict[str, Any]:
+def status_json(request: Request, conn: sqlite3.Connection = Depends(get_conn)) -> dict[str, Any]:
     """A short status for other systems, such as a phone widget fed by Home Assistant."""
     now = utcnow()
     cutoff = (now - timedelta(days=RECENT_DAYS)).strftime("%Y-%m-%dT%H:%M:%S")
     fresh = (now - timedelta(hours=STATUS_FRESH_HOURS)).strftime("%Y-%m-%dT%H:%M:%S")
-    recent = [s for s in load_sessions(conn, "WHERE s.ended_at >= ?", (cutoff,), limit=500)
+    recent = [s for s in load_sessions(conn, "WHERE s.ended_at >= ?", (cutoff,), limit=500,
+                                       mask=hidden_names(request, conn))
               if not s["project_archived"]]
     groups = {
         "waiting": [s for s in recent if s["status"] == "waiting" and (s["ended_at"] or "") >= fresh],
@@ -295,7 +335,7 @@ def status_json(conn: sqlite3.Connection = Depends(get_conn)) -> dict[str, Any]:
 
 @router.get("/overview")
 def overview(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
-    summaries = project_summaries(conn)
+    summaries = project_summaries(conn, hidden_names(request, conn))
 
     def ordered(items):
         # Pinned projects lead in the order you gave them. The rest follows by activity.
@@ -330,7 +370,7 @@ def overview(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
 
 @router.get("/inbox")
 def inbox(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
-    items = [p for p in project_summaries(conn).values()
+    items = [p for p in project_summaries(conn, hidden_names(request, conn)).values()
              if p["workspace_id"] is None and not p["archived"]]
     items.sort(key=lambda p: p["last_activity"] or "", reverse=True)
     return render(request, conn, "inbox.html", projects=items, targets=targets(conn))
@@ -366,9 +406,12 @@ def project_page(project_id: int, request: Request, conn: sqlite3.Connection = D
     mine = [rs for rs in rulesets if applies(rs, view)]
     briefing = build_briefing(rulesets, view)
     spent = usage.for_project(conn, load_prices(request.app.state.pricing_file), project_id, 30)
-    others = conn.execute(
-        "SELECT id, name, key FROM projects WHERE id != ? AND archived = 0 ORDER BY name COLLATE NOCASE",
-        (project_id,)).fetchall()
+    mask = hidden_names(request, conn)
+    others = [{"id": row["id"], "name": mask.get(row["id"]) or row["name"],
+               "key": "git:hidden" if row["id"] in mask else row["key"]}
+              for row in conn.execute(
+                  "SELECT id, name, key FROM projects WHERE id != ? AND archived = 0 "
+                  "ORDER BY name COLLATE NOCASE", (project_id,))]
     aliases = conn.execute(
         "SELECT * FROM project_aliases WHERE project_id = ? ORDER BY created_at", (project_id,)).fetchall()
     return render(request, conn, "project.html", project=project, sessions=sessions,
@@ -379,12 +422,16 @@ def project_page(project_id: int, request: Request, conn: sqlite3.Connection = D
 @router.get("/sessions")
 def sessions_page(request: Request, q: str = "", conn: sqlite3.Connection = Depends(get_conn)):
     where, params = "", ()
+    mask = hidden_names(request, conn)
     if q.strip():
         like = f"%{q.strip()}%"
-        where = "WHERE s.title LIKE ? OR s.first_prompt LIKE ? OR s.last_prompt LIKE ? OR p.name LIKE ?"
+        where = "WHERE (s.title LIKE ? OR s.first_prompt LIKE ? OR s.last_prompt LIKE ? OR p.name LIKE ?)"
         params = (like, like, like, like)
+        if mask:
+            # A search hit would tell what a hidden session is about.
+            where += " AND COALESCE(p.private, 0) = 0"
     return render(request, conn, "sessions.html",
-                  sessions=load_sessions(conn, where, params, limit=300), q=q)
+                  sessions=load_sessions(conn, where, params, limit=300, mask=mask), q=q)
 
 
 @router.get("/sessions/{pk}")
@@ -401,9 +448,11 @@ def session_page(pk: int, request: Request, all: int = 0,
         hidden = len(turns) - TURN_LIMIT
         turns = turns[-TURN_LIMIT:]
     spent = usage.for_session(conn, load_prices(request.app.state.pricing_file), pk)
-    choices = conn.execute(
-        "SELECT id, name FROM projects WHERE archived = 0 OR id = ? ORDER BY name COLLATE NOCASE",
-        (session["project_id"],)).fetchall()
+    mask = hidden_names(request, conn)
+    choices = [{"id": row["id"], "name": mask.get(row["id"]) or row["name"]}
+               for row in conn.execute(
+                   "SELECT id, name FROM projects WHERE archived = 0 OR id = ? "
+                   "ORDER BY name COLLATE NOCASE", (session["project_id"],))]
     return render(request, conn, "session.html", session=session, turns=turns, hidden=hidden,
                   spent=spent, choices=choices)
 
@@ -414,12 +463,13 @@ def usage_page(request: Request, days: int = 30, conn: sqlite3.Connection = Depe
         days = 30
     prices = load_prices(request.app.state.pricing_file)
     return render(request, conn, "usage.html", days=days, periods=usage.PERIODS, prices=prices,
-                  report=usage.report(conn, prices, days), pricing_file=request.app.state.pricing_file)
+                  report=usage.report(conn, prices, days, hidden_names(request, conn)),
+                  pricing_file=request.app.state.pricing_file)
 
 
 @router.get("/worktrees")
 def worktrees_page(request: Request, state: str = "", conn: sqlite3.Connection = Depends(get_conn)):
-    items = load_worktrees(conn)
+    items = load_worktrees(conn, mask=hidden_names(request, conn))
     counts = Counter(wt["state"] for wt in items)
     if state:
         items = [wt for wt in items if wt["state"] == state]
@@ -483,7 +533,8 @@ KIND_LABELS = {
 templates.env.globals["kind_labels"] = KIND_LABELS
 
 
-def load_rule_files(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+def load_rule_files(conn: sqlite3.Connection,
+                    mask: dict[int, str] | None = None) -> list[dict[str, Any]]:
     rows = conn.execute(
         """SELECT f.id, f.scope, f.kind, f.name, f.rel_path, f.base_path, f.description,
                   f.applies_to, f.sha, f.bytes, f.modified_at, f.project_id, f.machine_id,
@@ -507,13 +558,19 @@ def load_rule_files(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         item["differing"] = len(others) - item["identical"]
     files.sort(key=lambda f: (f["scope"] != "user", (f["project_name"] or "").lower(),
                               f["kind"], f["name"].lower()))
+    # Masked last: copies are found by name, so the names must be real until here.
+    for item in files:
+        if mask and item["project_id"] in mask:
+            item.update(project_name=mask[item["project_id"]], name=HIDDEN, rel_path=HIDDEN,
+                        base_path=HIDDEN, description="", applies_to="")
     return files
 
 
 @router.get("/rules")
 def rules_page(request: Request, kind: str = "", project: int = 0, q: str = "",
                conn: sqlite3.Connection = Depends(get_conn)):
-    files = load_rule_files(conn)
+    mask = hidden_names(request, conn)
+    files = load_rule_files(conn, mask)
     counts = Counter(item["kind"] for item in files)
     total_items = sum(item["rule_count"] for item in files)
     if kind:
@@ -524,7 +581,8 @@ def rules_page(request: Request, kind: str = "", project: int = 0, q: str = "",
         like = f"%{q.strip()}%"
         hits = {row["id"] for row in conn.execute(
             "SELECT id FROM rule_files WHERE content LIKE ? OR name LIKE ?", (like, like))}
-        files = [item for item in files if item["id"] in hits]
+        # A search hit would tell what a hidden file contains.
+        files = [item for item in files if item["id"] in hits and item["project_id"] not in mask]
     drifted = sum(1 for item in files if item["differing"])
     return render(request, conn, "rules.html", files=files, counts=counts, kind=kind, q=q,
                   project=project, total_items=total_items, drifted=drifted)
@@ -532,6 +590,7 @@ def rules_page(request: Request, kind: str = "", project: int = 0, q: str = "",
 
 @router.get("/rules/{file_id}")
 def rule_file_page(file_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    # The page of one file shows it as it is, like the page of a project.
     files = load_rule_files(conn)
     current = next((item for item in files if item["id"] == file_id), None)
     if current is None:
@@ -554,6 +613,7 @@ def rule_file_page(file_id: int, request: Request, conn: sqlite3.Connection = De
 def rulesets_page(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     rulesets = current_rulesets(request.app)
     imported = conn.execute("SELECT COUNT(*) FROM rule_files").fetchone()[0]
+    mask = hidden_names(request, conn)
     rows = []
     for row in conn.execute(
         """SELECT p.id FROM projects p
@@ -563,6 +623,7 @@ def rulesets_page(request: Request, conn: sqlite3.Connection = Depends(get_conn)
         project = project_view(conn, row["id"])
         briefing = build_briefing(rulesets, project)
         on_demand = sum(rs.tokens for rs in rulesets if rs.name in briefing["on_demand"])
+        project["name"] = mask.get(project["id"]) or project["name"]
         rows.append({**project, "start_tokens": briefing["tokens"],
                      "always": len(briefing["always"]), "on_demand": len(briefing["on_demand"]),
                      "on_demand_tokens": on_demand})
@@ -787,12 +848,14 @@ def load_proposals(conn: sqlite3.Connection, request: Request, status: str) -> l
         (status == "pending",),
     ).fetchall()
     sets = {rs.name: rs for rs in current_rulesets(request.app)}
+    mask = hidden_names(request, conn)
     result = []
     for row in rows:
         item = dict(row)
         ruleset = sets.get(row["ruleset"])
         item["title"] = ruleset.title if ruleset else row["ruleset"]
         item["missing"] = ruleset is None
+        item["project_name"] = mask.get(row["project_id"]) or row["project_name"]
         item["diff"] = ""
         if ruleset and row["mode"] == "replace" and row["status"] == "pending":
             # A replacement is hard to judge as a whole, so the page shows what changes.
@@ -859,3 +922,25 @@ def reset_ruleset(name: str, request: Request, conn: sqlite3.Connection = Depend
         raise HTTPException(409, "This rule set exists only in the hub")
     (request.app.state.live_rulesets_dir / f"{name}.md").unlink(missing_ok=True)
     return back(request, conn, f"/rulesets/{name}")
+
+
+# --- privacy ----------------------------------------------------------------
+
+
+@router.post("/privacy")
+def set_privacy(request: Request, hide: str = Form(""), conn: sqlite3.Connection = Depends(get_conn)):
+    """Turn "Hide private projects" on or off for this browser."""
+    response = back(request, conn, "/")
+    if hide == "1":
+        response.set_cookie(HIDE_COOKIE, "1", max_age=365 * 24 * 3600, httponly=True, samesite="lax")
+    else:
+        response.delete_cookie(HIDE_COOKIE)
+    return response
+
+
+@router.post("/projects/{project_id}/private")
+def set_project_private(project_id: int, request: Request, private: str = Form(""),
+                        conn: sqlite3.Connection = Depends(get_conn)):
+    conn.execute("UPDATE projects SET private = ? WHERE id = ?",
+                 (1 if private == "1" else 0, project_id))
+    return back(request, conn, f"/projects/{project_id}")

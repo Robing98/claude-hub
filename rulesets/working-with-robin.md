@@ -8,5 +8,5 @@ order: 1
 - Ask when information is missing. Do not guess.
 - When a tool or the environment blocks the work, say so at once. Do not work around it quietly.
 - Keep everything a person reads short: the key point first, then the detail. A big task does not justify a long text.
-- No em-dashes in anything a person reads: docs, comments, commit messages, UI text. Use a comma, a colon, or a full stop.
-- Comments explain why, not what.
+- No em-dashes in anything a person reads: docs, comments, commit messages, UI text, data files, and locale strings. Use a comma, a colon, or a full stop.
+- Comments explain why, not what. A comment that states a non-obvious invariant is worth more than ten that describe syntax.

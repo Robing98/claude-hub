@@ -24,7 +24,7 @@ This setup is a draft. The hub side is tested. The Home Assistant side is writte
 }
 ```
 
-A reply counts as "waiting for you" for two hours. If the web view has a password, add `username` and `password` to the `rest` entry.
+A reply counts as "waiting for you" for two hours. A lock screen is visible to others, so consider `http://192.168.178.185:8787/status.json?hide=1` as the resource: it shows private projects as "Project n" and hides their session titles. If the web view has a password, add `username` and `password` to the `rest` entry.
 
 ## Home Assistant configuration
 
