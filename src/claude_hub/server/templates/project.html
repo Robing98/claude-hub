@@ -24,16 +24,24 @@
   </form>
 </div>
 
+{% if spent.tokens %}
+<p class="hint"><a href="/usage">Last 30 days: {{ spent.tokens | tokens }} tokens, {{ spent.cost | usd }} at API prices{% if spent.unpriced %}, {{ spent.unpriced | tokens }} tokens without a price{% endif %}.</a></p>
+{% endif %}
+
 <section>
   <h2>Rules for sessions</h2>
   <div class="toolbar">
-    <form method="post" action="/projects/{{ project.id }}/ai" class="inline">
+    <form method="post" action="/projects/{{ project.id }}/session-rules" class="inline">
+      <label class="check"><input type="checkbox" name="hub_rules" value="1"{% if project.hub_rules %} checked{% endif %}> Sessions get their rules from the hub</label>
       <label class="check"><input type="checkbox" name="ai_ok" value="1"{% if project.ai_ok %} checked{% endif %}> AI traces in Git are allowed</label>
       <button type="submit" class="quiet">Save</button>
     </form>
   </div>
+  {% if not project.hub_rules %}
+  <p class="hint">Off: a session in this project gets nothing from the hub and keeps using the rule files of the project. The list shows what it gets once you turn this on.</p>
+  {% endif %}
   {% if rulesets %}
-  <p class="hint"><a href="/projects/{{ project.id }}/briefing">A session starts with about {{ briefing.tokens }} tokens of rules.</a></p>
+  <p class="hint"><a href="/projects/{{ project.id }}/briefing">A session {{ "starts" if project.hub_rules else "would start" }} with about {{ briefing.tokens }} tokens of rules.</a></p>
   <ul class="plain box">
     {% for rs in rulesets %}
     <li><span><a href="/rulesets/{{ rs.name }}">{{ rs.title }}</a> <span class="sub">about {{ rs.tokens }} tokens</span></span>

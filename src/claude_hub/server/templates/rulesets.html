@@ -3,7 +3,7 @@
 {% block title %}Rule sets · Claude hub{% endblock %}
 {% block main %}
 <h1>Rule sets</h1>
-<p class="lead">What Claude Code sessions receive from the hub. Each set is one file in <span class="mono">{{ folder }}</span>. A set marked "always" is part of every session start. The others appear as one index line and load on demand.</p>
+<p class="lead">What Claude Code sessions receive from the hub, in the projects where you turned that on. Each set is one file in <span class="mono">{{ folder }}</span>. A set marked "always" is part of every session start. The others appear as one index line and load on demand.</p>
 <p class="hint"><a href="/rules">Imported instruction files: {{ imported }}</a>. These are the files found on your machines, kept as the source for consolidation.</p>
 
 <div class="tablewrap">
@@ -30,22 +30,23 @@
   <h2>What a session carries per project</h2>
   <div class="tablewrap">
   <table>
-    <thead><tr><th>Project</th><th>Workspace</th><th>AI traces in Git</th><th class="num">At start</th><th class="num">On demand</th></tr></thead>
+    <thead><tr><th>Project</th><th>Workspace</th><th>Rules from the hub</th><th>AI traces in Git</th><th class="num">At start</th><th class="num">On demand</th></tr></thead>
     <tbody>
     {% for p in projects %}
       <tr>
         <td><a href="/projects/{{ p.id }}">{{ p.name }}</a></td>
         <td>{{ p.workspace or "" }}</td>
+        <td>{% if p.hub_rules %}<span class="pill active">on</span>{% else %}off{% endif %}</td>
         <td>{{ "allowed" if p.ai_ok else "not allowed" }}</td>
         <td class="num"><a href="/projects/{{ p.id }}/briefing">{{ p.always }} sets, about {{ p.start_tokens }} tokens</a></td>
         <td class="num">{{ p.on_demand }} sets, about {{ p.on_demand_tokens }} tokens</td>
       </tr>
     {% else %}
-      <tr><td colspan="5" class="empty">No projects yet.</td></tr>
+      <tr><td colspan="6" class="empty">No projects yet.</td></tr>
     {% endfor %}
     </tbody>
   </table>
   </div>
-  <p class="hint">Sizes are estimates: one token is about four characters.</p>
+  <p class="hint">Sizes are estimates: one token is about four characters. For a project with "off", the sizes show what a session would get. A session outside any project gets the sets for all projects.</p>
 </section>
 {% endblock %}

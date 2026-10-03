@@ -192,7 +192,35 @@ AI_SWITCH_SCHEMA = """
 ALTER TABLE projects ADD COLUMN ai_ok INTEGER NOT NULL DEFAULT 0;
 """
 
-MIGRATIONS = [SCHEMA, RULES_SCHEMA, WORK_DIRS_SCHEMA, AI_SWITCH_SCHEMA]
+# Whether sessions of a project get their rules from the hub. Off by default,
+# so a project keeps its own rule files until it is moved on purpose.
+HUB_RULES_SCHEMA = """
+ALTER TABLE projects ADD COLUMN hub_rules INTEGER NOT NULL DEFAULT 0;
+"""
+
+# Token counts per session, UTC day, and model. Costs are not stored: they are
+# computed from the price file when a page is shown, so a price change applies
+# to the past as well. A subagent transcript is a session with a parent.
+USAGE_SCHEMA = """
+ALTER TABLE sessions ADD COLUMN parent_session_id TEXT;
+CREATE INDEX sessions_parent ON sessions(machine_id, parent_session_id);
+CREATE TABLE usage_daily (
+    session_pk INTEGER NOT NULL REFERENCES sessions(pk) ON DELETE CASCADE,
+    day TEXT NOT NULL,
+    model TEXT NOT NULL,
+    messages INTEGER NOT NULL DEFAULT 0,
+    input INTEGER NOT NULL DEFAULT 0,
+    output INTEGER NOT NULL DEFAULT 0,
+    cache_write_5m INTEGER NOT NULL DEFAULT 0,
+    cache_write_1h INTEGER NOT NULL DEFAULT 0,
+    cache_read INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (session_pk, day, model)
+);
+CREATE INDEX usage_daily_day ON usage_daily(day);
+"""
+
+MIGRATIONS = [SCHEMA, RULES_SCHEMA, WORK_DIRS_SCHEMA, AI_SWITCH_SCHEMA, HUB_RULES_SCHEMA,
+              USAGE_SCHEMA]
 
 
 def init(data_dir: Path) -> None:

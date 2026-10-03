@@ -13,6 +13,10 @@ from claude_hub.server.app import create_app
 from claude_hub.server.ingest import hash_token
 
 TOKEN = "test-token"
+# What one reply uses, in the shape of the API.
+USAGE = {"input_tokens": 10, "output_tokens": 20, "cache_creation_input_tokens": 30,
+         "cache_read_input_tokens": 40,
+         "cache_creation": {"ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": 30}}
 
 
 def make_lines(session_id: str, cwd: str, prompts: list[str], *, branch: str = "main",
@@ -36,7 +40,7 @@ def make_lines(session_id: str, cwd: str, prompts: list[str], *, branch: str = "
         if finish_turn or index < len(prompts) - 1:
             lines.append({**base, "type": "assistant", "uuid": f"a{index}",
                           "message": {"id": f"msg{index}b", "role": "assistant", "model": "claude-test",
-                                      "stop_reason": "end_turn",
+                                      "stop_reason": "end_turn", "usage": dict(USAGE),
                                       "content": [{"type": "text", "text": f"Answer {index}"}]}})
     lines.append({"type": "ai-title", "aiTitle": f"Title of {session_id}", "sessionId": session_id})
     return lines

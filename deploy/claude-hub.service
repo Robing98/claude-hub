@@ -8,6 +8,7 @@ User=hub
 Group=hub
 Environment=HUB_DATA_DIR=/var/lib/claude-hub
 Environment=HUB_RULESETS_DIR=/opt/claude-hub/src/rulesets
+Environment=HUB_PRICING_FILE=/opt/claude-hub/src/pricing.toml
 EnvironmentFile=/etc/claude-hub.env
 ExecStart=/opt/claude-hub/venv/bin/claude-hub serve --host 0.0.0.0 --port 8787
 Restart=on-failure

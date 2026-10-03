@@ -28,6 +28,26 @@ def find_transcripts(config_dir: Path) -> Iterator[Path]:
             yield from sorted(folder.glob("*.jsonl"))
 
 
+def find_subagents(config_dir: Path) -> Iterator[tuple[Path, str]]:
+    """Yield (file, parent session ID) for subagent transcripts.
+
+    Claude Code writes what a subagent did, and the tokens it used, into
+    ``<session>/subagents/`` beside the session file.
+    """
+    projects = config_dir / "projects"
+    if not projects.is_dir():
+        return
+    for folder in sorted(projects.iterdir()):
+        if folder.is_dir():
+            for path in sorted(folder.glob("*/subagents/*.jsonl")):
+                yield path, path.parent.parent.name
+
+
+def upload_id(path: Path, parent: str | None) -> str:
+    """The ID a transcript is stored under. Subagent file names repeat between sessions."""
+    return f"{parent}.{path.stem}" if parent else path.stem
+
+
 def head_sha(path: Path) -> str | None:
     """Hash the first line. It never changes while the file is only appended to."""
     with open(path, "rb") as handle:
@@ -53,10 +73,11 @@ def _batches(path: Path, offset: int, chunk_bytes: int) -> Iterator[list[bytes]]
 
 
 def sync_file(client: Client, account: Account, path: Path, known: dict[str, Any] | None,
-              chunk_bytes: int, git_cache: dict[str, dict], repos_seen: set[str]) -> int:
+              chunk_bytes: int, git_cache: dict[str, dict], repos_seen: set[str],
+              parent: str | None = None) -> int:
     """Upload the new part of one transcript. Returns the bytes sent."""
-    session_id = path.stem
-    if not _SESSION_ID.match(session_id):
+    session_id = upload_id(path, parent)
+    if not _SESSION_ID.match(session_id) or (parent and not _SESSION_ID.match(parent)):
         return 0
     size = path.stat().st_size
     head = head_sha(path)
@@ -75,7 +96,7 @@ def sync_file(client: Client, account: Account, path: Path, known: dict[str, Any
     for attempt in range(3):
         try:
             sent = _upload_from(client, account, path, session_id, offset, truncate, head,
-                                chunk_bytes, git_cache, repos_seen)
+                                chunk_bytes, git_cache, repos_seen, parent)
             return sent
         except _OffsetConflict as conflict:
             offset = conflict.expected
@@ -90,7 +111,7 @@ class _OffsetConflict(Exception):
 
 def _upload_from(client: Client, account: Account, path: Path, session_id: str, offset: int,
                  truncate: bool, head: str, chunk_bytes: int, git_cache: dict[str, dict],
-                 repos_seen: set[str]) -> int:
+                 repos_seen: set[str], parent: str | None = None) -> int:
     sent = 0
     context: dict[str, Any] = {}
     batches = _batches(path, offset, chunk_bytes)
@@ -118,6 +139,8 @@ def _upload_from(client: Client, account: Account, path: Path, session_id: str, 
             "source_path": str(path),
             **context,
         }
+        if parent:
+            body["parent"] = parent
         status, answer = client.request("POST", f"/api/v1/sessions/{session_id}/append", body,
                                         accept=(409,))
         if status == 409:
@@ -134,10 +157,12 @@ def sync_account(client: Client, account: Account, state: dict[str, Any], chunk_
                  log: Callable[[str], None]) -> tuple[int, int]:
     """Upload all changed transcripts of one account. Returns (files, bytes)."""
     files = total = 0
-    for path in find_transcripts(account.config_dir):
+    found = [(path, None) for path in find_transcripts(account.config_dir)]
+    found += list(find_subagents(account.config_dir))
+    for path, parent in found:
         try:
-            sent = sync_file(client, account, path, state.get(path.stem), chunk_bytes,
-                             git_cache, repos_seen)
+            sent = sync_file(client, account, path, state.get(upload_id(path, parent)),
+                             chunk_bytes, git_cache, repos_seen, parent)
         except HubError as exc:
             if exc.status in (0, 401):
                 raise

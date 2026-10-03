@@ -12,6 +12,7 @@ A self-hosted hub that collects Claude Code sessions, worktrees, and instruction
 - `src/claude_hub/collector/`: runs on every machine.
 - `src/claude_hub/*.py`: shared code for both sides.
 - `rulesets/`: the rule sets that sessions receive. One Markdown file per set.
+- `pricing.toml`: API prices per model for the usage page.
 - `deploy/`: installation on the Proxmox container. `hub.bat`: shortcuts on Windows.
 
 ## Rules
@@ -21,6 +22,7 @@ A self-hosted hub that collects Claude Code sessions, worktrees, and instruction
 - The transcript format is internal to Claude Code. Parse defensively and skip what is unknown. A change to what `parse_meta` derives raises `PARSER_VERSION`.
 - A schema change is a new entry in `MIGRATIONS` in `db.py`. A shipped entry is never edited.
 - An endpoint that writes calls `conn.commit()` before it returns.
+- Costs are never stored. The database holds token counts, and a page computes the cost from `pricing.toml`. A price in that file comes from the pricing page of the vendor, with the date in `read_on`.
 - Text from transcripts and rule files is user-controlled. Templates keep autoescaping and never use `|safe`.
 - In templates, do not read a dict key that is named like a dict method (`items`, `keys`, `values`) with dot syntax.
 - Every change comes with a test, and the suite is green before a commit.

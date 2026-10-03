@@ -103,3 +103,33 @@ def test_work_dirs_count_the_folders_a_session_touched():
     assert dirs["/srv/nb"] == 1
     assert dirs["D:\\"] == len(objs)
     assert not any("relative" in key for key in dirs)
+
+
+def test_usage_counts_each_message_once_per_day_and_model():
+    def reply(message_id, stamp, usage, model="claude-opus-5-5", **extra):
+        return {"type": "assistant", "sessionId": "s", "timestamp": stamp, **extra,
+                "message": {"id": message_id, "model": model, "usage": usage,
+                            "content": [{"type": "text", "text": "x"}]}}
+
+    first = {"input_tokens": 2, "output_tokens": 5, "cache_creation_input_tokens": 100,
+             "cache_read_input_tokens": 1000,
+             "cache_creation": {"ephemeral_5m_input_tokens": 40, "ephemeral_1h_input_tokens": 60}}
+    meta = parse_meta(lines_of([
+        # One message, written as two lines. The last line carries the final output count.
+        reply("m1", "2026-10-01T23:59:00.000Z", first),
+        reply("m1", "2026-10-01T23:59:01.000Z", {**first, "output_tokens": 50}),
+        # An older shape without the split counts as a 5-minute cache write.
+        reply("m2", "2026-10-02T00:01:00.000Z", {"input_tokens": 1, "output_tokens": 7,
+                                                 "cache_creation_input_tokens": 9}),
+        # A subagent line inside the session file counts as well.
+        reply("m3", "2026-10-02T00:02:00.000Z", {"input_tokens": 3, "output_tokens": 4},
+              model="claude-haiku-4-5", isSidechain=True),
+        # Lines that Claude Code writes itself carry no usage worth counting.
+        reply("m4", "2026-10-02T00:03:00.000Z", {"input_tokens": 0, "output_tokens": 0},
+              model="<synthetic>"),
+        reply("m5", "2026-10-02T00:04:00.000Z", "broken"),
+    ]))
+    assert meta.usage == {
+        "2026-10-01": {"claude-opus-5-5": [1, 2, 50, 40, 60, 1000]},
+        "2026-10-02": {"claude-opus-5-5": [1, 1, 7, 9, 0, 0], "claude-haiku-4-5": [1, 3, 4, 0, 0, 0]},
+    }

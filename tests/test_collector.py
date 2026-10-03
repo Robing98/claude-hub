@@ -7,7 +7,8 @@ import pytest
 from claude_hub.collector import gitscan
 from claude_hub.collector.cli import run_once
 from claude_hub.collector.config import Account, Config, ConfigError, load
-from claude_hub.server import db, store
+from claude_hub.server import db, store, usage
+from claude_hub.server.pricing import load_prices
 
 from conftest import TOKEN, make_lines, to_jsonl
 
@@ -121,10 +122,12 @@ def test_end_to_end(repo: Path, tmp_path: Path, live_server: str, data_dir: Path
     worktree = repo / ".claude" / "worktrees" / "dirty"
     lines = make_lines("sess-1", str(worktree), ["Start the feature", "Continue"], branch="dirty")
     path = write_transcript(config_dir, "sess-1", lines[:4])
-    # Subagent transcripts live one level deeper and are not sessions of their own.
+    # Subagent transcripts live one level deeper. They are uploaded for their
+    # token usage, under the session that started them.
     sub = path.parent / "sess-1" / "subagents"
     sub.mkdir(parents=True)
-    (sub / "agent-1.jsonl").write_bytes(to_jsonl(lines[:2]))
+    (sub / "agent-1.jsonl").write_bytes(to_jsonl(
+        [{**line, "isSidechain": True} for line in make_lines("sess-1", str(worktree), ["Search"])]))
 
     (config_dir / "CLAUDE.md").write_text("# Personal\nKeep answers short.\n")
     (repo / "CLAUDE.md").write_text("# Build\nRun the gate.\n# Tests\nUse pytest.\n")
@@ -147,7 +150,13 @@ def test_end_to_end(repo: Path, tmp_path: Path, live_server: str, data_dir: Path
     assert session["key"] == "git:github.com/example/demo"
     assert session["first_prompt"] == "Start the feature"
     assert session["raw_bytes"] == path.stat().st_size
-    assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 1
+    others = conn.execute("SELECT session_id, parent_session_id, project_id FROM sessions "
+                          "WHERE pk != ?", (session["pk"],)).fetchall()
+    assert [tuple(row) for row in others] == [("sess-1.agent-1", "sess-1", None)]
+    # One reply of the session and one of its subagent: the subagent's tokens
+    # count for the project of its parent.
+    spent = usage.for_project(conn, load_prices(None), session["project_id"], 0)
+    assert (spent["messages"], spent["output"], spent["cache_write_1h"]) == (2, 40, 60)
     # No scan root is configured: the repository was found through the session.
     assert conn.execute("SELECT COUNT(*) FROM worktrees").fetchone()[0] == 5
     assert conn.execute("SELECT platform FROM machines").fetchone()[0]
@@ -168,8 +177,10 @@ def test_end_to_end(repo: Path, tmp_path: Path, live_server: str, data_dir: Path
     assert [json.loads(line) for line in stored] == lines
 
     conn = db.connect(data_dir)
-    row = conn.execute("SELECT title, user_prompts, last_event FROM sessions").fetchone()
+    row = conn.execute("SELECT title, user_prompts, last_event FROM sessions "
+                       "WHERE parent_session_id IS NULL").fetchone()
     assert tuple(row) == ("Title of sess-1", 2, "reply")
+    assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 2
     conn.close()
 
 

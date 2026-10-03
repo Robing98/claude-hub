@@ -141,15 +141,49 @@ One place for all instructions, grouped by purpose and delivered per project, ro
 Built so far:
 
 - Rule sets are Markdown files in `rulesets/` of the hub repository. The hub is their only source.
-- Each project has an AI switch: whether AI traces in Git are allowed. The default is no. Sets can depend on it.
+- Each project has two switches, both off by default. "Rules from the hub" decides whether a session gets hub rules at all, so that a project is moved on purpose and never loads two sets of rules. "AI traces in Git" decides which sets with an `ai` field apply.
+- No project gets tool attribution in commit messages. That rule is its own set and does not depend on a switch.
 - A `SessionStart` hook fetches the rules of the project from the hub and keeps a local copy for the time when the hub is not reachable.
 - Sets marked "on-demand" appear as one index line. The agent loads a set with a command when the work needs it.
-- Consolidated so far: four shared sets, the hub's own set, and Orbis split into 14 sets without a change of wording.
+- Consolidated so far: five shared sets, the hub's own set, and Orbis split into 14 sets without a change of wording.
+- The shared sets carry the lessons of the "Sixty Worktrees, One Slot" notes: shared counters, held resources, detector precision, preconditions.
+
+Two questions that are independent of each other:
+
+- Where the rules live. Target: in the hub, for every project. A `CLAUDE.md` in Git is then no longer a source.
+- Whether Git may show that AI tools were used: author names, docs that name the tools, Claude files. That is the AI switch. Orbis is "allowed", the synchrotron repository is "not allowed".
+
+Decided on 2026-10-03: the hub generates the rule file for the lanes that cannot run the hook, and rule files move out of Git.
+
+Next, rules outside Git:
+
+- An export command writes the rules of a project into its folder as a generated file. The file is hidden from Git through `.git/info/exclude`, which stays local and leaves no trace in the repository. This is a write into a working tree, so it is its own command and never part of a collector run.
+- Claude Code skips the generated file through `claudeMdExcludes` and takes the hook briefing, which is smaller.
+- Cowork does not load a `CLAUDE.md` from a connected folder by itself. It needs a pointer: one line in the global instructions, or a skill, that says to read the generated file first. Target: the hub as a local MCP server in the desktop app, so that a Cowork chat fetches rules and loads sets on demand as Claude Code does.
+- Orbis: stop tracking `CLAUDE.md` once the export works. Until then that file wins over the hub sets, because the design lane still edits it.
 
 Open:
 
-- Cowork, chat, and Claude Design sessions cannot fetch rules from the hub. Orbis keeps its `CLAUDE.md` in Git because those lanes read it. Decide whether the hub generates that file from the sets, so that there is still one source.
+- How a lane changes a rule when the rules live in the hub. Today the Orbis design lane edits `CLAUDE.md` itself. Candidates: a rule proposal in the decision queue, or rule sets that are edited in the hub with their own history and no deploy.
+- Rule proposals from session outputs: find the corrections that repeat across sessions, and propose a rule for each. Needs the summary step of phase 3.
 - The synchrotron and GolleIT rules are not consolidated yet.
+
+## Usage and cost
+
+Built: token counts per session, day, and model from the transcripts, subagents included. The usage page shows them per project, workspace, model, and day with an API-equivalent cost from `pricing.toml`.
+
+Open:
+
+- Cowork, chat, and Claude Design are not counted. They use the same subscription limits.
+- A view against the limits of the plan: how much of the week is used, and by which project.
+- Cost per result: per merged pull request, per roadmap item, per content unit.
+
+## Ideas from 2026-10-03
+
+- The hub as the main way to use Claude: see, decide, and adjust everything there. This needs the decision queue and the runner, in that order.
+- Project overview with pipelines: the stages of a project and what is in each stage.
+- Progress meters for content. This needs a framework first: what a unit of content is, how its size is estimated, and when it counts as done. The Orbis content map and progression map are the first test case.
+- An end-of-day page in the shape of the "Schichtende" page: done, next in order with an effort estimate, waiting for others.
 
 ## Roadmap per project
 

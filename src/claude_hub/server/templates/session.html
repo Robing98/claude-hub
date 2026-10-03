@@ -16,6 +16,13 @@
   <div><dt>Tool calls</dt><dd>{{ session.tool_calls }}</dd></div>
   <div><dt>Source</dt><dd>{{ session.entrypoint or "" }} {{ session.cc_version or "" }}</dd></div>
   <div><dt>Models</dt><dd>{{ session.models or "" }}</dd></div>
+  {% if spent.tokens %}
+  <div><dt>Tokens</dt><dd title="Input {{ spent.input }}, cache writes {{ spent.cache_write_5m + spent.cache_write_1h }}, cache reads {{ spent.cache_read }}, output {{ spent.output }}">{{ spent.tokens | tokens }}, output {{ spent.output | tokens }}</dd></div>
+  <div><dt>At API prices</dt><dd>{{ spent.cost | usd }}{% if spent.unpriced %} <span class="sub">partly without a price</span>{% endif %}</dd></div>
+  {% if spent.subagents.tokens %}
+  <div><dt>Of that, subagents</dt><dd>{{ spent.subagents.tokens | tokens }}, {{ spent.subagents.cost | usd }}</dd></div>
+  {% endif %}
+  {% endif %}
 </dl>
 <p class="sub">Directory: <span class="mono">{{ session.cwd or "" }}</span> · Session ID: <span class="mono">{{ session.session_id }}</span></p>
 

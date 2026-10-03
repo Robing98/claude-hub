@@ -1,9 +1,13 @@
 import base64
 import gzip
 
-from claude_hub.server import db, store
+from datetime import datetime, timezone
+from pathlib import Path
 
-from conftest import make_lines, to_jsonl
+from claude_hub.server import db, store, usage
+from claude_hub.server.pricing import load_prices
+
+from conftest import USAGE, make_lines, to_jsonl
 
 
 def chunk(raw: bytes) -> str:
@@ -195,6 +199,15 @@ def test_now_page_groups_sessions(client, monkeypatch):
     assert "Title of done" in waiting and "Title of busy" not in waiting
     assert "Title of busy" in rest
 
+    status = client.get("/status.json").json()
+    assert (status["waiting"], status["paused"], status["running"], status["active"]) == (1, 1, 0, 2)
+    assert status["headline"] == "1 waiting for you, 1 stopped mid-turn"
+    assert status["detail"] == "a: Title of done · b: Title of busy"
+    assert [s["status"] for s in status["sessions"]] == ["waiting", "paused"]
+    # Three hours later, the old reply no longer counts as open in the feed.
+    monkeypatch.setattr(views, "utcnow", lambda: datetime(2026, 10, 1, 13, 30, tzinfo=timezone.utc))
+    assert client.get("/status.json").json()["headline"] == "Nothing open"
+
 
 def test_ui_password(data_dir, monkeypatch):
     from fastapi.testclient import TestClient
@@ -358,3 +371,109 @@ def test_reparse_outdated_updates_old_sessions(client, data_dir, capsys):
 
     assert cli.main(["--data-dir", str(data_dir), "reparse", "--outdated"]) == 0
     assert "Re-parsed 0 sessions" in capsys.readouterr().out
+
+
+PRICES = """
+read_on = "2026-10-03"
+plan_usd_per_month = 100
+[models."claude-opus-4"]
+input = 15.0
+output = 75.0
+[models."claude-opus-4-5"]
+input = 5.0
+cache_write_5m = 6.25
+cache_write_1h = 10.0
+cache_read = 0.5
+output = 25.0
+"""
+
+
+def test_prices_match_the_longest_prefix_and_fill_cache_prices(tmp_path):
+    path = tmp_path / "pricing.toml"
+    path.write_text(PRICES)
+    prices = load_prices(path)
+    assert prices.rates("claude-opus-4-5-20251101")["output"] == 25.0
+    assert prices.rates("claude-opus-4-20250514") == {
+        "input": 15.0, "output": 75.0, "cache_write_5m": 18.75, "cache_write_1h": 30.0, "cache_read": 1.5}
+    assert prices.rates("claude-test") is None and prices.cost("claude-test", {"input": 5}) is None
+    counts = {"input": 1_000_000, "output": 1_000_000, "cache_write_5m": 0,
+              "cache_write_1h": 1_000_000, "cache_read": 2_000_000}
+    assert prices.cost("claude-opus-4-5", counts) == 5.0 + 25.0 + 10.0 + 1.0
+
+    assert load_prices(tmp_path / "absent.toml").error
+    path.write_text("not = = toml")
+    assert load_prices(path).error and load_prices(path).models == {}
+
+    shipped = load_prices(Path(__file__).resolve().parents[1] / "pricing.toml")
+    assert not shipped.error and shipped.read_on
+    assert shipped.rates("claude-opus-5-5")["output"] == 20.0
+    assert shipped.rates("claude-haiku-4-5-20251001")["input"] == 1.0
+    for name, rates in shipped.models.items():
+        assert set(rates) == {"input", "output", "cache_write_5m", "cache_write_1h", "cache_read"}, name
+
+
+def test_usage_goes_to_the_project_and_subagents_to_their_parent(client, app, data_dir, tmp_path,
+                                                               monkeypatch):
+    def as_model(lines, model, sidechain=False):
+        for line in lines:
+            if line.get("type") == "assistant":
+                line["message"]["model"] = model
+            line["isSidechain"] = sidechain
+        return lines
+
+    remote = "github.com/robing98/demo"
+    upload(client, "s1", to_jsonl(as_model(make_lines("s1", "/w", ["One", "Two"]), "claude-opus-4-5")),
+           remote=remote)
+    sub = to_jsonl(as_model(make_lines("s1", "/w", ["Search"]), "claude-opus-4-5", sidechain=True))
+    assert upload(client, "s1.agent-a", sub, parent="s1").status_code == 200
+    assert upload(client, "s1.agent-b", sub, parent="../x").status_code == 400
+    upload(client, "s2", to_jsonl(as_model(make_lines("s2", "/tmp/x", ["Loose"]), "claude-test")))
+
+    (tmp_path / "pricing.toml").write_text(PRICES)
+    app.state.pricing_file = tmp_path / "pricing.toml"
+    prices = load_prices(app.state.pricing_file)
+    per_reply = prices.cost("claude-opus-4-5", {**{k: 0 for k in ("cache_write_5m",)},
+                                                "input": USAGE["input_tokens"],
+                                                "output": USAGE["output_tokens"],
+                                                "cache_write_1h": 30, "cache_read": 40})
+
+    conn = db.connect(data_dir)
+    report = usage.report(conn, prices, 0)
+    by_name = {item["name"]: item for item in report["projects"]}
+    demo = by_name["demo"]
+    # Two replies of the session and one of its subagent.
+    assert demo["messages"] == 3 and demo["output"] == 60 and len(demo["sessions"]) == 1
+    assert abs(demo["cost"] - 3 * per_reply) < 1e-12 and demo["unpriced"] == 0
+    loose = by_name["x"]
+    assert loose["cost"] == 0 and loose["unpriced"] == 100
+    assert report["total"]["tokens"] == 400 and report["total"]["unpriced"] == 100
+    assert abs(sum(item["share"] for item in report["projects"]) - 100) < 1e-9
+    assert [item["name"] for item in report["models"]] == ["claude-opus-4-5", "claude-test"]
+    assert report["days"][0]["day"] == "2026-10-01" and abs(report["days"][0]["bar"] - 100) < 1e-9
+
+    pk = conn.execute("SELECT pk FROM sessions WHERE session_id = 's1'").fetchone()[0]
+    spent = usage.for_session(conn, prices, pk)
+    assert spent["messages"] == 3 and spent["subagents"]["messages"] == 1
+    # The sessions are from October 1. Seen from October 20, they fall into
+    # the last 30 days but not into the last 7.
+    monkeypatch.setattr(usage, "utcnow", lambda: datetime(2026, 10, 20, tzinfo=timezone.utc))
+    assert usage.report(conn, prices, 7)["total"]["tokens"] == 0
+    assert usage.report(conn, prices, 30)["total"]["tokens"] == 400
+    assert usage.for_project(conn, prices, demo["id"], 7)["tokens"] == 0
+    monkeypatch.undo()
+    conn.close()
+
+    page = client.get("/usage?days=0")
+    assert page.status_code == 200 and "built-in method" not in page.text
+    assert "demo" in page.text and "no price" in page.text and "without a price" in page.text
+    assert client.get("/usage").status_code == 200 and client.get("/usage?days=5").status_code == 200
+    # A subagent transcript is not a session in the lists.
+    listing = client.get("/sessions").text
+    assert "Title of s1" in listing and "agent-a" not in listing
+    assert "Of that, subagents" in client.get(f"/sessions/{pk}").text
+    assert "s1.agent-a" in client.get("/api/v1/sessions/state").json()["sessions"]
+
+    # An upload that replaces a transcript replaces its usage as well.
+    upload(client, "s1", to_jsonl(as_model(make_lines("s1", "/w", ["One"]), "claude-opus-4-5")),
+           remote=remote, truncate=True)
+    assert one(data_dir, "SELECT SUM(messages) AS n FROM usage_daily WHERE session_pk = ?", pk)["n"] == 1

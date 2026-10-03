@@ -6,7 +6,7 @@ import pytest
 
 from claude_hub.collector import briefing, cli
 from claude_hub.collector.config import Account, Config
-from claude_hub.rulesets import applies, build_briefing, load_rulesets, parse_ruleset
+from claude_hub.rulesets import applies, build_briefing, load_rulesets, nest_headings, parse_ruleset
 from claude_hub.server import db
 
 from conftest import TOKEN
@@ -94,15 +94,23 @@ def test_briefing_text(rules_dir: Path):
     assert build_briefing([], orbis)["text"] == ""
 
 
-def test_briefing_api_and_ai_switch(client, data_dir, rules_dir):
-    answer = client.get("/api/v1/briefing", params={"cwd": "D:\\dev\\orbis", "remote": "github.com/robing98/orbis"}).json()
-    assert answer["project"] == "orbis" and answer["always"] == ["no-tooling-traces", "orbis-core"]
+def test_briefing_api_and_project_switches(client, data_dir, rules_dir):
+    params = {"cwd": "D:\\dev\\orbis", "remote": "github.com/robing98/orbis"}
+    # A project keeps its own rule files until hub rules are turned on for it.
+    answer = client.get("/api/v1/briefing", params=params).json()
+    assert answer["project"] == "orbis" and answer["text"] == "" and answer["hub_rules"] is False
 
     project_id = db.connect(data_dir).execute("SELECT id FROM projects").fetchone()[0]
-    client.post(f"/projects/{project_id}/ai", data={"ai_ok": "1"})
-    answer = client.get("/api/v1/briefing", params={"cwd": "D:\\dev\\orbis", "remote": "github.com/robing98/orbis"}).json()
-    assert answer["always"] == ["orbis-core"]
-    client.post(f"/projects/{project_id}/ai", data={})
+    assert "would start" in client.get(f"/projects/{project_id}").text
+    client.post(f"/projects/{project_id}/session-rules", data={"hub_rules": "1"})
+    answer = client.get("/api/v1/briefing", params=params).json()
+    assert answer["always"] == ["no-tooling-traces", "orbis-core"] and answer["hub_rules"] is True
+
+    client.post(f"/projects/{project_id}/session-rules", data={"hub_rules": "1", "ai_ok": "1"})
+    assert client.get("/api/v1/briefing", params=params).json()["always"] == ["orbis-core"]
+    client.post(f"/projects/{project_id}/session-rules", data={"ai_ok": "1"})
+    assert client.get("/api/v1/briefing", params=params).json()["text"] == ""
+    client.post(f"/projects/{project_id}/session-rules", data={"hub_rules": "1"})
     assert "no-tooling-traces" in client.get("/api/v1/briefing", params={"remote": "github.com/robing98/orbis"}).json()["always"]
 
     # A plain folder gets the sets for all projects only.
@@ -146,7 +154,7 @@ def test_hook_prints_rules_and_falls_back_to_the_saved_copy(tmp_path, live_serve
     assert run_hook() == ""
 
 
-def test_rules_show_and_placeholder(tmp_path, live_server, rules_dir, monkeypatch, capsys):
+def test_rules_show_and_placeholder(tmp_path, live_server, rules_dir, data_dir, monkeypatch, capsys):
     config = tmp_path / "cfg" / "collector.toml"
     config.parent.mkdir()
     config.write_text(f'server_url = "{live_server}"\ntoken = "{TOKEN}"\n')
@@ -159,9 +167,18 @@ def test_rules_show_and_placeholder(tmp_path, live_server, rules_dir, monkeypatc
     # Ask as the Orbis repository: its briefing carries the index with a runnable command.
     monkeypatch.setattr(briefing, "resolve_dir", lambda cwd: {"remote": "github.com/robing98/orbis",
                                                              "repo_root": cwd, "main_repo": None})
-    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"cwd": str(tmp_path)})))
-    assert cli.main(["--config", str(config), "hook", "session-start"]) == 0
-    out = capsys.readouterr().out
+    def run_hook():
+        monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"cwd": str(tmp_path)})))
+        assert cli.main(["--config", str(config), "hook", "session-start"]) == 0
+        return capsys.readouterr().out
+
+    # Hub rules are off for a new project: the hook prints nothing.
+    assert run_hook() == ""
+    conn = db.connect(data_dir)
+    conn.execute("UPDATE projects SET hub_rules = 1")
+    conn.commit()
+    conn.close()
+    out = run_hook()
     assert "{{RULES_COMMAND}}" not in out
     assert "claude_hub.collector.cli" in out and "rules show NAME" in out and str(config).replace("\\", "/") in out
     assert cfg.server_url == live_server
@@ -200,8 +217,8 @@ def test_install_hook_keeps_other_settings(tmp_path):
 def test_the_shipped_rule_sets_load():
     folder = Path(__file__).resolve().parents[1] / "rulesets"
     sets = {rs.name: rs for rs in load_rulesets(folder)}
-    assert {"working-with-robin", "no-tooling-traces", "parallel-work", "verification",
-            "claude-hub", "orbis-core"} <= set(sets)
+    assert {"working-with-robin", "commit-messages", "no-tooling-traces", "parallel-work",
+            "verification", "claude-hub", "orbis-core"} <= set(sets)
     for rs in sets.values():
         assert rs.title and rs.body, rs.name
         assert rs.all_projects or rs.workspaces or rs.projects, f"{rs.name} applies to nothing"
@@ -211,10 +228,24 @@ def test_the_shipped_rule_sets_load():
     orbis = {"key": "git:github.com/robing98/orbis", "name": "orbis", "workspace": "Private", "ai_ok": 1}
     briefing_ = build_briefing(list(sets.values()), orbis)
     assert "no-tooling-traces" not in briefing_["always"]
-    assert briefing_["always"][:3] == ["working-with-robin", "parallel-work", "verification"]
+    # The commit rule holds in every project, whatever the AI switch says.
+    assert briefing_["always"][:4] == ["working-with-robin", "commit-messages", "parallel-work",
+                                       "verification"]
+    assert "no-tooling-traces" in build_briefing(list(sets.values()), {**orbis, "ai_ok": 0})["always"]
     assert {"orbis-core", "orbis-conventions", "orbis-done", "orbis-session"} <= set(briefing_["always"])
     # Every rule that the core lists points to a set that exists and loads on demand.
     import re
     named = set(re.findall(r"\(`(orbis-rules-[a-z]+)`\)", sets["orbis-core"].body))
     assert named and named <= set(briefing_["on_demand"])
-    print(briefing_["tokens"])
+    # No heading inside a set sits on the level of the set titles.
+    titles = {f"## {sets[name].title}" for name in briefing_["always"]}
+    second_level = {line for line in briefing_["text"].splitlines() if line.startswith("## ")}
+    assert second_level - titles == {"## More rule sets"}
+
+
+def test_headings_inside_a_set_move_below_its_title():
+    body = "Intro\n## Layout\n### Detail\n```\n## not a heading\n```\n# Top"
+    assert nest_headings(body).splitlines() == [
+        "Intro", "#### Layout", "##### Detail", "```", "## not a heading", "```", "### Top"]
+    assert nest_headings("### Already below\ntext") == "### Already below\ntext"
+    assert nest_headings("No headings") == "No headings"

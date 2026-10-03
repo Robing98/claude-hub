@@ -77,6 +77,8 @@ class AppendBody(BaseModel):
     cwd: str | None = None
     remote: str | None = None
     repo_root: str | None = None
+    # Set for a subagent transcript: the session that started the subagent.
+    parent: str | None = None
 
 
 class WorktreeIn(BaseModel):
@@ -170,6 +172,8 @@ def append_session(
 ):
     if not store.valid_session_id(session_id):
         raise HTTPException(400, "Invalid session ID")
+    if body.parent is not None and not store.valid_session_id(body.parent):
+        raise HTTPException(400, "Invalid parent session ID")
     try:
         member = base64.b64decode(body.data, validate=True)
         raw = gzip.decompress(member)
@@ -207,10 +211,11 @@ def append_session(
     if session is None:
         cur = conn.execute(
             """INSERT INTO sessions (session_id, machine_id, account_id, config_dir, source_path,
-                                     raw_bytes, stored_bytes, head_sha, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                     raw_bytes, stored_bytes, head_sha, updated_at,
+                                     parent_session_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (session_id, machine["id"], account_id, body.config_dir, body.source_path,
-             new_size, stored_bytes, body.head_sha, now),
+             new_size, stored_bytes, body.head_sha, now, body.parent),
         )
         pk = cur.lastrowid
         project_id = None
@@ -226,7 +231,11 @@ def append_session(
              truncate, body.head_sha, now, pk),
         )
 
-    if body.final:
+    if body.final and body.parent:
+        # A subagent has no project of its own. Its usage counts for the
+        # project of its parent, which is looked up when a page needs it.
+        refresh_session(conn, data_dir, pk)
+    elif body.final:
         work_dirs = refresh_session(conn, data_dir, pk)
         cwd = conn.execute("SELECT cwd FROM sessions WHERE pk = ?", (pk,)).fetchone()["cwd"]
         resolved = projects.resolve_session_project(
@@ -273,6 +282,14 @@ def refresh_session(conn: sqlite3.Connection, data_dir: Path, pk: int) -> dict[s
          meta.started_at, meta.ended_at, meta.user_prompts, meta.assistant_messages, meta.tool_calls,
          meta.entrypoint, meta.cc_version, ", ".join(meta.models), meta.cost_usd,
          meta.last_event, meta.last_tool, json.dumps(meta.work_dirs), PARSER_VERSION, pk),
+    )
+    conn.execute("DELETE FROM usage_daily WHERE session_pk = ?", (pk,))
+    conn.executemany(
+        """INSERT INTO usage_daily (session_pk, day, model, messages, input, output,
+                                    cache_write_5m, cache_write_1h, cache_read)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        [(pk, day, model, *counts) for day, models in meta.usage.items()
+         for model, counts in models.items()],
     )
     return meta.work_dirs
 
@@ -365,7 +382,7 @@ def project_view(conn: sqlite3.Connection, project_id: int | None) -> dict | Non
     if project_id is None:
         return None
     row = conn.execute(
-        """SELECT p.id, p.key, p.name, p.kind, p.ai_ok, w.name AS workspace
+        """SELECT p.id, p.key, p.name, p.kind, p.ai_ok, p.hub_rules, w.name AS workspace
            FROM projects p LEFT JOIN workspaces w ON w.id = p.workspace_id WHERE p.id = ?""",
         (project_id,),
     ).fetchone()
@@ -390,8 +407,14 @@ def get_briefing(
     if project and project["kind"] == "dir" and not project["workspace"]:
         project = None
     conn.commit()
+    if project and not project["hub_rules"]:
+        # This project still keeps its rules in its own files. Sending hub
+        # rules on top would load them twice and let the two copies disagree.
+        return {"text": "", "always": [], "on_demand": [], "tokens": 0,
+                "project": project["name"], "hub_rules": False}
     result = build_briefing(load_rulesets(request.app.state.rulesets_dir), project)
     result["project"] = project["name"] if project else None
+    result["hub_rules"] = True
     return result
 
 

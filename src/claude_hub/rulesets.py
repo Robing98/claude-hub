@@ -7,6 +7,7 @@ a session gets it at start or loads it on demand.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -115,6 +116,36 @@ def applies(ruleset: RuleSet, project: dict[str, Any] | None) -> bool:
     return any(name in identities for name in ruleset.projects)
 
 
+_HEADING = re.compile(r"^(#{1,6})(?=\s)")
+SET_BODY_LEVEL = 3
+
+
+def nest_headings(body: str) -> str:
+    """Shift the headings of a set body below the title of the set.
+
+    In a briefing every set title is a second-level heading. A body that
+    uses the same level would read as several sets.
+    """
+    levels, fenced = [], False
+    for line in body.splitlines():
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+        match = None if fenced else _HEADING.match(line)
+        if match:
+            levels.append(len(match.group(1)))
+    shift = SET_BODY_LEVEL - min(levels) if levels else 0
+    if shift <= 0:
+        return body
+    result, fenced = [], False
+    for line in body.splitlines():
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+        if not fenced and _HEADING.match(line):
+            line = "#" * shift + line
+        result.append(line)
+    return "\n".join(result)
+
+
 def build_briefing(rulesets: list[RuleSet], project: dict[str, Any] | None) -> dict[str, Any]:
     """Assemble what a session receives at its start."""
     mine = [rs for rs in rulesets if applies(rs, project)]
@@ -130,7 +161,7 @@ def build_briefing(rulesets: list[RuleSet], project: dict[str, Any] | None) -> d
         lines.append(f"Project: {project.get('name')} ({workspace}). AI traces in Git: {traces}.")
     lines.append("These rules are binding for this session.")
     for ruleset in always:
-        lines += ["", f"## {ruleset.title}", "", ruleset.body]
+        lines += ["", f"## {ruleset.title}", "", nest_headings(ruleset.body)]
     if on_demand:
         lines += [
             "", "## More rule sets", "",

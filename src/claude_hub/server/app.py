@@ -23,6 +23,8 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     app.state.data_dir = data_path
     rulesets = os.environ.get("HUB_RULESETS_DIR")
     app.state.rulesets_dir = Path(rulesets).resolve() if rulesets else Path.cwd() / "rulesets"
+    pricing = os.environ.get("HUB_PRICING_FILE")
+    app.state.pricing_file = Path(pricing).resolve() if pricing else Path.cwd() / "pricing.toml"
     app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
     app.include_router(ingest.router)
     app.include_router(views.router)

@@ -19,6 +19,8 @@ order: 10
 The rules, as Markdown.
 ```
 
+Headings inside a set can start at any level. In the session text they are moved below the title of the set.
+
 | Field | Meaning |
 | --- | --- |
 | `load` | `always` puts the set into every session start. `on-demand` lists it as one index line, and the agent loads it when the work needs it. The default is `always`. |
@@ -28,6 +30,15 @@ The rules, as Markdown.
 | `projects` | Projects, separated by commas: `host/owner/name` of the remote, or the project name. |
 | `ai` | `no` limits the set to projects where AI traces in Git are not allowed, `yes` to the others. Without the field, the switch does not matter. |
 | `order` | Position in the session text. Lower comes first. The default is 100. |
+
+## Switches per project
+
+Each project page in the hub has two switches:
+
+- **Sessions get their rules from the hub:** Off by default. While it is off, a session in that project gets nothing from the hub and keeps the rule files of the project. Turn it on when the rules of the project are in this folder. A session outside any project always gets the sets with `all: true`.
+- **AI traces in Git are allowed:** Off by default. It decides which sets with an `ai` field apply. It does not change the commit rule: no project gets tool attribution in commit messages.
+
+## When a set applies
 
 A set applies when `all` is true, or its workspaces contain the project's workspace, or its projects contain the project. The `ai` field then narrows that.
 

@@ -31,7 +31,7 @@ _NOISE_PREFIXES = (
 
 # Raise this when parse_meta derives something new. The server re-parses
 # stored transcripts that were read with an older version.
-PARSER_VERSION = 2
+PARSER_VERSION = 3
 
 _ABSOLUTE = re.compile(r"^(?:[A-Za-z]:[\\/]|/|\\\\)")
 _CD = re.compile(r"""(?:^|&&|;|\|)\s*cd\s+(?:/d\s+)?["']?((?:[A-Za-z]:[\\/]|/)[^"'&;|\n]*)""")
@@ -67,6 +67,9 @@ class SessionMeta:
     # Folders that the session touched, with a count. A session that starts
     # in a parent folder is assigned to a repository through these.
     work_dirs: dict[str, int] = field(default_factory=dict)
+    # Tokens per UTC day and model: [messages, input, output, 5-minute cache
+    # writes, 1-hour cache writes, cache reads]. Subagent lines count too.
+    usage: dict[str, dict[str, list[int]]] = field(default_factory=dict)
     lines: int = 0
     parse_errors: int = 0
 
@@ -134,6 +137,27 @@ def _tool_dirs(block: dict[str, Any]) -> Iterator[str]:
             yield match.group(1).strip()
 
 
+def _count(value: Any) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
+
+
+def _usage_counts(usage: Any) -> list[int] | None:
+    """Return [input, output, 5-minute cache writes, 1-hour cache writes, cache reads]."""
+    if not isinstance(usage, dict):
+        return None
+    written = _count(usage.get("cache_creation_input_tokens"))
+    split = usage.get("cache_creation")
+    if isinstance(split, dict):
+        hour = _count(split.get("ephemeral_1h_input_tokens"))
+        five = _count(split.get("ephemeral_5m_input_tokens"))
+        # Older versions give only the sum. It is billed as a 5-minute write.
+        five += max(0, written - hour - five)
+    else:
+        hour, five = 0, written
+    return [_count(usage.get("input_tokens")), _count(usage.get("output_tokens")),
+            five, hour, _count(usage.get("cache_read_input_tokens"))]
+
+
 def _has_tool_result(obj: dict[str, Any]) -> bool:
     content = (obj.get("message") or {}).get("content")
     return isinstance(content, list) and any(
@@ -148,6 +172,9 @@ def parse_meta(lines: Iterable[bytes | str]) -> SessionMeta:
     models: list[str] = []
     ai_title = legacy_summary = None
     counted_messages: set[str] = set()
+    # One API message is written as several lines that repeat its usage, so
+    # the last line of a message decides what it used.
+    usage_by_message: dict[str, tuple[str, str, list[int]]] = {}
 
     for raw in lines:
         if not raw.strip():
@@ -194,10 +221,19 @@ def parse_meta(lines: Iterable[bytes | str]) -> SessionMeta:
             elif not obj.get("isSidechain") and _has_tool_result(obj):
                 meta.last_event = "tool_result"
         if kind == "assistant":
-            for block in (obj.get("message") or {}).get("content") or []:
+            message = obj.get("message") or {}
+            for block in message.get("content") or []:
                 if isinstance(block, dict) and block.get("type") == "tool_use":
                     for folder in _tool_dirs(block):
                         dirs[folder] = dirs.get(folder, 0) + 1
+            counts = _usage_counts(message.get("usage"))
+            model = message.get("model")
+            if counts and any(counts) and isinstance(model, str) and not model.startswith("<"):
+                key = message.get("id") or obj.get("uuid") or f"line{meta.lines}"
+                day = stamp[:10] if isinstance(stamp, str) else ""
+                # A message keeps the day of its first line.
+                day = usage_by_message[key][0] if key in usage_by_message else day
+                usage_by_message[key] = (day, model, counts)
         if kind == "assistant" and not obj.get("isSidechain"):
             message = obj.get("message") or {}
             # One API message is written as several lines, one per content block.
@@ -220,6 +256,11 @@ def parse_meta(lines: Iterable[bytes | str]) -> SessionMeta:
                     meta.last_event = "tool_call" if unfinished else "reply"
 
     meta.models = models
+    for day, model, counts in usage_by_message.values():
+        bucket = meta.usage.setdefault(day, {}).setdefault(model, [0] * 6)
+        bucket[0] += 1
+        for index, value in enumerate(counts, start=1):
+            bucket[index] += value
     top = sorted(dirs.items(), key=lambda item: -item[1])[:WORK_DIR_LIMIT]
     meta.work_dirs = dict(top)
     title = ai_title or legacy_summary or meta.first_prompt

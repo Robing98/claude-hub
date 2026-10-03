@@ -17,8 +17,9 @@ from ..rules import FILE_NAMED_KINDS
 from ..rulesets import applies, build_briefing, load_rulesets
 from ..transcript import iter_turns
 from . import projects as project_rules
-from . import store
+from . import store, usage
 from .ingest import get_conn, project_view
+from .pricing import load_prices
 from .status import (
     ACTION_STATES,
     RECENT_DAYS,
@@ -58,6 +59,24 @@ def display_key(key: str) -> str:
 templates.env.filters["display_key"] = display_key
 
 
+def tokens(value: int | None) -> str:
+    """Shorten a token count: 1,234,567 becomes 1.2M."""
+    value = value or 0
+    for limit, unit in ((1_000_000_000, "B"), (1_000_000, "M"), (1_000, "k")):
+        if value >= limit:
+            return f"{value / limit:.1f}{unit}"
+    return str(value)
+
+
+def usd(value: float | None) -> str:
+    value = value or 0.0
+    return f"${value:,.0f}" if value >= 100 else f"${value:,.2f}"
+
+
+templates.env.filters["tokens"] = tokens
+templates.env.filters["usd"] = usd
+
+
 def back(request: Request, conn: sqlite3.Connection, fallback: str = "/") -> RedirectResponse:
     """Commit the form's changes and return to the page it came from."""
     conn.commit()
@@ -95,6 +114,9 @@ def load_worktrees(conn: sqlite3.Connection, project_id: int | None = None) -> l
 
 def load_sessions(conn: sqlite3.Connection, where: str = "", params: tuple = (), limit: int = 200):
     now = utcnow()
+    # Subagent transcripts are stored as sessions, but they are not listed.
+    top_level = "s.parent_session_id IS NULL"
+    where = f"WHERE {top_level} AND ({where.strip()[6:]})" if where.strip() else f"WHERE {top_level}"
     rows = conn.execute(
         f"SELECT {SESSION_COLUMNS} {SESSION_JOINS} {where} "
         "ORDER BY COALESCE(s.ended_at, s.updated_at) DESC LIMIT ?",
@@ -127,7 +149,8 @@ def project_summaries(conn: sqlite3.Connection) -> dict[int, dict[str, Any]]:
     now = utcnow()
     for row in conn.execute(
         "SELECT s.project_id, s.ended_at, s.last_event, s.last_tool, m.name AS machine "
-        "FROM sessions s JOIN machines m ON m.id = s.machine_id WHERE s.project_id IS NOT NULL"
+        "FROM sessions s JOIN machines m ON m.id = s.machine_id "
+        "WHERE s.project_id IS NOT NULL AND s.parent_session_id IS NULL"
     ).fetchall():
         summary = summaries.get(row["project_id"])
         if summary is None:
@@ -216,6 +239,42 @@ def now_page(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     )
 
 
+# A reply that is older than this no longer counts as "waiting for you" in
+# the status feed. The Now page keeps showing it.
+STATUS_FRESH_HOURS = 2
+STATUS_DETAIL_LENGTH = 200
+
+
+@router.get("/status.json")
+def status_json(conn: sqlite3.Connection = Depends(get_conn)) -> dict[str, Any]:
+    """A short status for other systems, such as a phone widget fed by Home Assistant."""
+    now = utcnow()
+    cutoff = (now - timedelta(days=RECENT_DAYS)).strftime("%Y-%m-%dT%H:%M:%S")
+    fresh = (now - timedelta(hours=STATUS_FRESH_HOURS)).strftime("%Y-%m-%dT%H:%M:%S")
+    recent = load_sessions(conn, "WHERE s.ended_at >= ?", (cutoff,), limit=500)
+    groups = {
+        "waiting": [s for s in recent if s["status"] == "waiting" and (s["ended_at"] or "") >= fresh],
+        "running": [s for s in recent if s["status"] == "running"],
+        "paused": [s for s in recent if s["status"] == "paused" and (s["ended_at"] or "") >= fresh],
+    }
+    labels = {"waiting": "waiting for you", "running": "running", "paused": "stopped mid-turn"}
+    headline = ", ".join(f"{len(items)} {labels[name]}" for name, items in groups.items() if items)
+    listed = [s for name in ("waiting", "paused", "running") for s in groups[name]]
+    detail = " · ".join(f"{s['project_name'] or 'no project'}: {s['title'] or '(no prompt)'}"
+                        for s in listed[:3])
+    if len(detail) > STATUS_DETAIL_LENGTH:
+        detail = detail[:STATUS_DETAIL_LENGTH - 1].rstrip() + "…"
+    return {
+        **{name: len(items) for name, items in groups.items()},
+        "active": len(listed),
+        "headline": headline or "Nothing open",
+        "detail": detail,
+        "sessions": [{"status": s["status"], "project": s["project_name"], "title": s["title"],
+                      "machine": s["machine"], "last_activity": s["ended_at"]} for s in listed[:10]],
+        "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+
+
 @router.get("/overview")
 def overview(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     summaries = project_summaries(conn)
@@ -279,9 +338,10 @@ def project_page(project_id: int, request: Request, conn: sqlite3.Connection = D
     view = project_view(conn, project_id)
     mine = [rs for rs in rulesets if applies(rs, view)]
     briefing = build_briefing(rulesets, view)
+    spent = usage.for_project(conn, load_prices(request.app.state.pricing_file), project_id, 30)
     return render(request, conn, "project.html", project=project, sessions=sessions,
                   worktrees=worktrees, targets=targets(conn), current_target=current,
-                  rulesets=mine, briefing=briefing)
+                  rulesets=mine, briefing=briefing, spent=spent)
 
 
 @router.get("/sessions")
@@ -308,7 +368,18 @@ def session_page(pk: int, request: Request, all: int = 0,
     if not all and len(turns) > TURN_LIMIT:
         hidden = len(turns) - TURN_LIMIT
         turns = turns[-TURN_LIMIT:]
-    return render(request, conn, "session.html", session=session, turns=turns, hidden=hidden)
+    spent = usage.for_session(conn, load_prices(request.app.state.pricing_file), pk)
+    return render(request, conn, "session.html", session=session, turns=turns, hidden=hidden,
+                  spent=spent)
+
+
+@router.get("/usage")
+def usage_page(request: Request, days: int = 30, conn: sqlite3.Connection = Depends(get_conn)):
+    if days not in usage.PERIODS:
+        days = 30
+    prices = load_prices(request.app.state.pricing_file)
+    return render(request, conn, "usage.html", days=days, periods=usage.PERIODS, prices=prices,
+                  report=usage.report(conn, prices, days), pricing_file=request.app.state.pricing_file)
 
 
 @router.get("/worktrees")
@@ -335,13 +406,15 @@ def settings_page(request: Request, conn: sqlite3.Connection = Depends(get_conn)
     ).fetchall()
     machines = conn.execute(
         """SELECT m.*, u.name AS user,
-                  (SELECT COUNT(*) FROM sessions s WHERE s.machine_id = m.id) AS sessions,
+                  (SELECT COUNT(*) FROM sessions s
+                    WHERE s.machine_id = m.id AND s.parent_session_id IS NULL) AS sessions,
                   (SELECT COUNT(*) FROM repos r WHERE r.machine_id = m.id) AS repos
            FROM machines m JOIN users u ON u.id = m.user_id ORDER BY m.name"""
     ).fetchall()
     accounts = conn.execute(
         """SELECT a.*, u.name AS user,
-                  (SELECT COUNT(*) FROM sessions s WHERE s.account_id = a.id) AS sessions
+                  (SELECT COUNT(*) FROM sessions s
+                    WHERE s.account_id = a.id AND s.parent_session_id IS NULL) AS sessions
            FROM accounts a JOIN users u ON u.id = a.user_id ORDER BY a.label"""
     ).fetchall()
     return render(request, conn, "settings.html", workspaces=workspaces, rules=rules,
@@ -571,8 +644,9 @@ def apply_rules(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     return back(request, conn, "/settings")
 
 
-@router.post("/projects/{project_id}/ai")
-def set_project_ai(project_id: int, request: Request, ai_ok: str = Form(""),
-                   conn: sqlite3.Connection = Depends(get_conn)):
-    conn.execute("UPDATE projects SET ai_ok = ? WHERE id = ?", (1 if ai_ok == "1" else 0, project_id))
+@router.post("/projects/{project_id}/session-rules")
+def set_session_rules(project_id: int, request: Request, hub_rules: str = Form(""),
+                      ai_ok: str = Form(""), conn: sqlite3.Connection = Depends(get_conn)):
+    conn.execute("UPDATE projects SET hub_rules = ?, ai_ok = ? WHERE id = ?",
+                 (1 if hub_rules == "1" else 0, 1 if ai_ok == "1" else 0, project_id))
     return back(request, conn, f"/projects/{project_id}")

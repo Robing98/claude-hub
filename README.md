@@ -12,7 +12,8 @@ Status: phase 1. See [the plan](docs/plan.md) for the goal, the design, and the 
 - **Worktrees:** one state per worktree: `dirty`, `unpushed`, `missing`, `stale`, `merged`, `idle`, `active`, or `main`.
 - **Rules:** every instruction file that Claude Code loads, from all machines: `CLAUDE.md`, `.claude/rules/`, skills, subagents, commands, and output styles. `CLAUDE.md` and rule files are split into single rules by heading. Copies that differ are marked.
 - **Rule sets:** the hub hands each Claude Code session the rules of its project. A hook asks the hub at session start, and a local copy covers the time when the hub is not reachable. Sets marked "on-demand" cost one index line until the work needs them. See [the rule set format](rulesets/README.md).
-- **AI switch per project:** whether a project may carry AI traces in Git. Sets can depend on it.
+- **Two switches per project:** whether sessions get their rules from the hub, and whether the project may carry AI traces in Git. Both are off by default.
+- **Usage:** tokens per project, workspace, model, and day, with subagents, and what the same tokens cost at API prices.
 - **Several machines and accounts:** one collector per machine, one entry per Claude Code configuration directory.
 
 ## How it works
@@ -105,12 +106,24 @@ The server address and the container ID are set at the top of `hub.bat`.
 
 1. Write or change the rule sets in `rulesets/` and deploy.
 2. On each machine, install the session hook once: `hub hooks-install`. Inside WSL: `hub wsl-hooks-install`. The command adds one entry to the Claude Code `settings.json` and keeps a backup beside it. `hub hooks-remove` undoes it.
-3. Start a new Claude Code session. Its first context contains the rules of the project.
-4. To see what a session receives in a folder, run `hub rules` there. `hub rules NAME` shows one set.
+3. On the project page in the hub, turn on **Sessions get their rules from the hub**. Until then, a session in that project gets nothing from the hub, so a project with its own rule files does not load two sets of rules.
+4. Start a new Claude Code session. Its first context contains the rules of the project.
+5. To see what a session receives in a folder, run `hub rules` there. `hub rules NAME` shows one set.
 
 The **Rules** page lists all sets with their size and shows, per project, how much a session carries at its start.
 
 Old `CLAUDE.md` files can stay on disk. To stop Claude Code from loading them as well, add them to `claudeMdExcludes` in the Claude Code settings.
+
+## Usage and cost
+
+The **Usage** page shows the tokens that sessions used, per project, workspace, model, and day. Subagents count for the session that started them.
+
+The cost is an API-equivalent: what the same tokens cost on the API. A subscription is a flat fee, so the number compares projects and days. It is not a bill.
+
+- Prices are in `pricing.toml`, in USD per million tokens. Edit the file when prices change, then deploy. The hub applies the current file to all stored usage.
+- A model without an entry in `pricing.toml` is listed with "no price", and its tokens are missing from the cost.
+- To compare the last 30 days with what you pay, set `plan_usd_per_month` in `pricing.toml`.
+- Days are UTC days.
 
 ## Worktree states
 
@@ -147,7 +160,8 @@ Squash merges are not detected yet, because that needs the pull request state fr
 
 - The transcript format is internal to Claude Code and can change. The parser skips what it does not know. After a parser update, run `claude-hub reparse` to rebuild the session fields from the stored transcripts.
 - Sessions of the desktop app, claude.ai chats, and artifacts are not collected yet.
-- Subagent transcripts are not uploaded yet.
+- Subagent transcripts are stored for their token usage. They cannot be read in the browser yet.
+- Usage covers Claude Code only. Cowork, chat, and Claude Design use the same subscription limits and are not counted.
 
 ## Development
 

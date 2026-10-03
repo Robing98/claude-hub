@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% set active = "usage" %}
+{% block title %}Usage · Claude hub{% endblock %}
+{% macro row_cells(item) %}
+  <td class="num">{{ item.cost | usd }}</td>
+  <td class="num">{{ "%.0f" | format(item.share) }} %<div class="bar" aria-hidden="true"><span style="width: {{ "%.1f" | format(item.share) }}%"></span></div></td>
+  <td class="num">{{ item.output | tokens }}</td>
+  <td class="num">{{ (item.input + item.cache_write_5m + item.cache_write_1h) | tokens }}</td>
+  <td class="num">{{ item.cache_read | tokens }}</td>
+  <td class="num">{{ item.sessions | length }}</td>
+{% endmacro %}
+{% block main %}
+<h1>Usage</h1>
+<p class="lead">Tokens that Claude Code sessions used, subagents included, and what the same tokens cost at API prices. A subscription is a flat fee, so this is a measure to compare projects, not a bill.</p>
+<p class="filters">
+  {% for period in periods %}
+  <a href="/usage?days={{ period }}"{% if days == period %} class="on"{% endif %}>{{ "Last %d days" | format(period) if period else "All time" }}</a>
+  {% endfor %}
+</p>
+{% if prices.error %}<p class="notice">{{ prices.error }} Token counts are shown without a cost.</p>{% endif %}
+
+{% set total = report.total %}
+<dl class="facts">
+  <div><dt>At API prices</dt><dd class="big">{{ total.cost | usd }}</dd></div>
+  <div><dt>Tokens</dt><dd class="big">{{ total.tokens | tokens }}</dd></div>
+  <div><dt>Output</dt><dd class="big">{{ total.output | tokens }}</dd></div>
+  <div><dt>Input from cache</dt><dd class="big">{{ "%.0f" | format(report.cached_share) }} %</dd></div>
+  <div><dt>Sessions</dt><dd class="big">{{ total.sessions | length }}</dd></div>
+  {% if days == 30 and prices.plan_usd_per_month %}
+  <div><dt>Compared with your plans</dt><dd class="big">{{ "%.1f" | format(total.cost / prices.plan_usd_per_month) }} ×</dd></div>
+  {% endif %}
+</dl>
+{% if total.unpriced %}<p class="notice">{{ total.unpriced | tokens }} tokens come from models without a price in the price file. They are missing from the cost.</p>{% endif %}
+
+<section>
+  <h2>By project</h2>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Project</th><th>Workspace</th><th class="num">At API prices</th><th class="num">Share</th><th class="num">Output</th><th class="num">New input</th><th class="num">Cache reads</th><th class="num">Sessions</th></tr></thead>
+    <tbody>
+    {% for item in report.projects %}
+      <tr>
+        <td>{% if item.id %}<a href="/projects/{{ item.id }}">{{ item.name }}</a>{% else %}{{ item.name }}{% endif %}</td>
+        <td>{{ item.workspace }}</td>
+        {{ row_cells(item) }}
+      </tr>
+    {% else %}
+      <tr><td colspan="8" class="empty">No usage in this period. Stored sessions are counted after the next deploy or after "claude-hub reparse".</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+
+{% if report.workspaces | length > 1 %}
+<section>
+  <h2>By workspace</h2>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Workspace</th><th class="num">At API prices</th><th class="num">Share</th><th class="num">Output</th><th class="num">New input</th><th class="num">Cache reads</th><th class="num">Sessions</th></tr></thead>
+    <tbody>
+    {% for item in report.workspaces %}
+      <tr><td>{{ item.name }}</td>{{ row_cells(item) }}</tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endif %}
+
+{% if report.models %}
+<section>
+  <h2>By model</h2>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Model</th><th class="num">At API prices</th><th class="num">Share</th><th class="num">Output</th><th class="num">New input</th><th class="num">Cache reads</th><th class="num">Sessions</th></tr></thead>
+    <tbody>
+    {% for item in report.models %}
+      <tr><td><span class="mono">{{ item.name }}</span>{% if not item.priced %} <span class="pill dirty">no price</span>{% endif %}</td>{{ row_cells(item) }}</tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section>
+  <h2>By day</h2>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Day (UTC)</th><th class="num">At API prices</th><th>Compared with the busiest day</th><th class="num">Output</th><th class="num">Tokens</th><th class="num">Sessions</th></tr></thead>
+    <tbody>
+    {% for item in report.days[:62] %}
+      <tr>
+        <td class="mono">{{ item.day }}</td>
+        <td class="num">{{ item.cost | usd }}</td>
+        <td><div class="bar wide" aria-hidden="true"><span style="width: {{ "%.1f" | format(item.bar) }}%"></span></div></td>
+        <td class="num">{{ item.output | tokens }}</td>
+        <td class="num">{{ item.tokens | tokens }}</td>
+        <td class="num">{{ item.sessions | length }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endif %}
+
+<p class="hint">Prices: <span class="mono">{{ pricing_file }}</span>{% if prices.read_on %}, read on {{ prices.read_on }}{% endif %}{% if prices.source %} from {{ prices.source }}{% endif %}. Edit that file when prices change. "New input" is uncached input plus cache writes. A session that runs past midnight counts on each day it was active.</p>
+{% endblock %}
