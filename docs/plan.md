@@ -210,14 +210,15 @@ Rule sets are chosen as the next step. The order of the other phases is open.
 ## Decisions
 
 - Hub runs on the existing Proxmox host as a plain service in its own container. The host has an i5-6600K, 8 GB of memory, and one 120 GB SSD, so Docker and agent sessions do not go there. No hardware purchase for the hub.
-- Summaries use a hosted model. The i5 host has no GPU.
+- No API usage besides the subscription. Robin uses one Max 20x plan. Everything that needs a model, summaries included, runs as a Claude Code session on that plan, started by the runner on the desktop. The i5 host has no GPU, so a local model there is not an option.
 - No own file sync. Git for code, Syncthing for the rest.
 - No local model for code search for now. A local embedding index as an MCP tool is the better option if token use for exploring becomes a problem.
 - Heavy work stays on the desktop. A larger home server is a later option for availability around the clock.
 
 ## Open points
 
-- API key for summaries, or another model source.
+- Summaries draw from the same plan limits as the work itself. Decide how much of the limit they may use, and whether a smaller model is enough.
+- A view against the plan limits needs the limit state. The transcripts hold token counts, not the share of the five-hour or weekly limit that is used. Find out whether Claude Code exposes that state.
 - Whether the Orbis repository has an automated check that level 3 can rely on.
 - Terms for a second account held by the same person. The consumer terms forbid sharing an account. A statement on one person with two accounts was not found.
 - How headless runs are billed. On 2026-10-02 the support article says they draw from the subscription limits, and that an announced change to a separate monthly credit is paused.

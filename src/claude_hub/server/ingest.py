@@ -245,7 +245,9 @@ def append_session(
             "SELECT kind FROM projects WHERE id = ?", (project_id,)).fetchone()["kind"] == "dir"
         # A repository assignment stays. A plain-folder one is only a fallback,
         # so it gives way as soon as the session's work points to a repository.
-        if resolved and (loose or body.remote):
+        # A project that was chosen by hand always stays.
+        manual = bool(session and session["project_manual"])
+        if resolved and not manual and (loose or body.remote):
             conn.execute("UPDATE sessions SET project_id = ? WHERE pk = ?", (resolved, pk))
 
     conn.commit()
@@ -386,7 +388,13 @@ def project_view(conn: sqlite3.Connection, project_id: int | None) -> dict | Non
            FROM projects p LEFT JOIN workspaces w ON w.id = p.workspace_id WHERE p.id = ?""",
         (project_id,),
     ).fetchone()
-    return dict(row) if row else None
+    if row is None:
+        return None
+    view = dict(row)
+    # Rule sets that name a merged project still apply to the project it went into.
+    view["aliases"] = [alias["key"] for alias in conn.execute(
+        "SELECT key FROM project_aliases WHERE project_id = ?", (project_id,))]
+    return view
 
 
 @router.get("/briefing")

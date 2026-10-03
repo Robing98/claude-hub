@@ -25,6 +25,17 @@
   {% endif %}
 </dl>
 <p class="sub">Directory: <span class="mono">{{ session.cwd or "" }}</span> · Session ID: <span class="mono">{{ session.session_id }}</span></p>
+<div class="toolbar">
+  <form method="post" action="/sessions/{{ session.pk }}/project" class="inline">
+    <label class="check" for="session-project">Project</label>
+    <select name="project" id="session-project">
+      <option value="">Assign automatically</option>
+      {% for choice in choices %}<option value="{{ choice.id }}"{% if session.project_manual and choice.id == session.project_id %} selected{% endif %}>{{ choice.name }}</option>{% endfor %}
+    </select>
+    <button type="submit" class="quiet">Move</button>
+    {% if session.project_manual %}<span class="pill">set by hand</span>{% endif %}
+  </form>
+</div>
 
 {% if hidden %}
 <p class="notice">Showing the last {{ turns | length }} turns. <a href="?all=1">Show all {{ turns | length + hidden }} turns</a>.</p>

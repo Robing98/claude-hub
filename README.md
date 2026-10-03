@@ -8,6 +8,7 @@ Status: phase 1. See [the plan](docs/plan.md) for the goal, the design, and the 
 
 - **Now page:** sessions that wait for your reply, sessions that run, sessions that stopped mid-turn, and worktrees with unsaved or unpushed work.
 - **Hierarchy:** workspace > class > project. Rules assign projects by Git host and owner, or by path. Unmatched projects go to the inbox.
+- **Order by hand:** pin projects to the top of their group and set their order, archive projects that are done, merge duplicates, and move a single session into another project.
 - **Sessions:** every Claude Code transcript, stored in full and readable in the browser.
 - **Worktrees:** one state per worktree: `dirty`, `unpushed`, `missing`, `stale`, `merged`, `idle`, `active`, or `main`.
 - **Rules:** every instruction file that Claude Code loads, from all machines: `CLAUDE.md`, `.claude/rules/`, skills, subagents, commands, and output styles. `CLAUDE.md` and rule files are split into single rules by heading. Copies that differ are marked.
@@ -113,6 +114,14 @@ The server address and the container ID are set at the top of `hub.bat`.
 The **Rules** page lists all sets with their size and shows, per project, how much a session carries at its start.
 
 Old `CLAUDE.md` files can stay on disk. To stop Claude Code from loading them as well, add them to `claudeMdExcludes` in the Claude Code settings.
+
+## Sort by hand
+
+- **Assign:** On a project page or in the inbox, choose a workspace or class. A choice made by hand wins over the rules.
+- **Pin and order:** In the overview, select **Pin**. Pinned projects lead their group. **Up** and **Down** change their order.
+- **Archive:** On a project page, select **Archive**. The project leaves the overview, the inbox, the Now page, and the rule table. Its usage stays in the totals. The overview lists archived projects at the end, with **Restore**.
+- **Merge:** On the page of the duplicate, choose the project to keep and select **Merge**. Sessions, worktrees, and instruction files move over. Later uploads for the duplicate land in the kept project. **Separate again** on the kept project ends that.
+- **Move a session:** On a session page, choose a project and select **Move**. The session stays there, whatever the collector reports later. **Assign automatically** returns it to the rules.
 
 ## Usage and cost
 

@@ -219,8 +219,23 @@ CREATE TABLE usage_daily (
 CREATE INDEX usage_daily_day ON usage_daily(day);
 """
 
+# Manual order. A pinned project leads its group, an archived one leaves the
+# lists, a session can be put into a project by hand, and a merged project
+# leaves its key behind as an alias, so that the next upload finds the target.
+ORGANIZE_SCHEMA = """
+ALTER TABLE projects ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE projects ADD COLUMN pin_position INTEGER;
+ALTER TABLE sessions ADD COLUMN project_manual INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE project_aliases (
+    key TEXT PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+"""
+
 MIGRATIONS = [SCHEMA, RULES_SCHEMA, WORK_DIRS_SCHEMA, AI_SWITCH_SCHEMA, HUB_RULES_SCHEMA,
-              USAGE_SCHEMA]
+              USAGE_SCHEMA, ORGANIZE_SCHEMA]
 
 
 def init(data_dir: Path) -> None:

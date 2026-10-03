@@ -69,19 +69,31 @@ def report(conn: sqlite3.Connection, prices: Prices, days: int) -> dict[str, Any
             bucket["sessions"].add(row["root_pk"])
 
     names = {row["id"]: row for row in conn.execute(
-        """SELECT p.id, p.name, w.name AS workspace FROM projects p
+        """SELECT p.id, p.name, p.archived, w.name AS workspace FROM projects p
            LEFT JOIN workspaces w ON w.id = p.workspace_id""")}
+
+    def merge(into: dict[str, Any], bucket: dict[str, Any]) -> None:
+        for name in ("messages", *FIELDS, "tokens", "cost", "unpriced"):
+            into[name] += bucket[name]
+        into["sessions"] |= bucket["sessions"]
+
     projects = []
     by_workspace: dict[str, dict[str, Any]] = {}
+    archived, archived_count = empty(), 0
     for project_id, bucket in by_project.items():
         info = names.get(project_id)
         workspace = (info["workspace"] if info else None) or ""
+        merge(by_workspace.setdefault(workspace, empty()), bucket)
+        if info and info["archived"]:
+            # Archived projects leave the list, but their usage stays in the totals.
+            merge(archived, bucket)
+            archived_count += 1
+            continue
         projects.append({**bucket, "id": project_id, "workspace": workspace,
                          "name": info["name"] if info else "No project"})
-        merged = by_workspace.setdefault(workspace, empty())
-        for name in ("messages", *FIELDS, "tokens", "cost", "unpriced"):
-            merged[name] += bucket[name]
-        merged["sessions"] |= bucket["sessions"]
+    if archived_count:
+        projects.append({**archived, "id": None, "workspace": "",
+                         "name": f"Archived projects ({archived_count})"})
 
     def ranked(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return sorted(items, key=lambda item: (-item["cost"], -item["tokens"]))

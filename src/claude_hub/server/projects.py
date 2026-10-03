@@ -15,6 +15,10 @@ def _get_or_create(conn: sqlite3.Connection, key: str, kind: str, name: str) -> 
     row = conn.execute("SELECT id FROM projects WHERE key = ?", (key,)).fetchone()
     if row:
         return row["id"]
+    # A project that was merged into another one lives on as an alias.
+    alias = conn.execute("SELECT project_id FROM project_aliases WHERE key = ?", (key,)).fetchone()
+    if alias:
+        return alias["project_id"]
     cur = conn.execute(
         "INSERT INTO projects (key, kind, name, created_at) VALUES (?, ?, ?, ?)",
         (key, kind, name, now_iso()),
@@ -132,7 +136,8 @@ def reassign_loose_sessions(conn: sqlite3.Connection, machine_id: int) -> int:
     rows = conn.execute(
         """SELECT s.pk, s.cwd, s.work_dirs, s.project_id FROM sessions s
            LEFT JOIN projects p ON p.id = s.project_id
-           WHERE s.machine_id = ? AND s.cwd IS NOT NULL AND (p.id IS NULL OR p.kind = 'dir')""",
+           WHERE s.machine_id = ? AND s.cwd IS NOT NULL AND s.project_manual = 0
+                 AND (p.id IS NULL OR p.kind = 'dir')""",
         (machine_id,),
     ).fetchall()
     for row in rows:
@@ -146,6 +151,52 @@ def reassign_loose_sessions(conn: sqlite3.Connection, machine_id: int) -> int:
         "(SELECT project_id FROM sessions WHERE project_id IS NOT NULL)"
     )
     return moved
+
+
+def merge_projects(conn: sqlite3.Connection, source_id: int, target_id: int) -> None:
+    """Move everything of one project into another and remember the old key."""
+    source = conn.execute("SELECT * FROM projects WHERE id = ?", (source_id,)).fetchone()
+    target = conn.execute("SELECT id FROM projects WHERE id = ?", (target_id,)).fetchone()
+    if source is None or target is None or source_id == target_id:
+        raise ValueError("Unknown project, or source and target are the same")
+    for table in ("sessions", "repos", "rule_files", "project_aliases"):
+        conn.execute(f"UPDATE {table} SET project_id = ? WHERE project_id = ?", (target_id, source_id))
+    conn.execute(
+        "INSERT OR REPLACE INTO project_aliases (key, project_id, name, created_at) VALUES (?, ?, ?, ?)",
+        (source["key"], target_id, source["name"], now_iso()),
+    )
+    conn.execute("DELETE FROM projects WHERE id = ?", (source_id,))
+
+
+def move_pin(conn: sqlite3.Connection, project_id: int, action: str) -> None:
+    """Pin a project, unpin it, or move it among the pinned projects of its group."""
+    project = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+    if project is None:
+        return
+    if action == "unpin":
+        conn.execute("UPDATE projects SET pin_position = NULL WHERE id = ?", (project_id,))
+        return
+    if project["pin_position"] is None:
+        if action == "pin":
+            conn.execute(
+                "UPDATE projects SET pin_position = "
+                "(SELECT COALESCE(MAX(pin_position), 0) + 1 FROM projects) WHERE id = ?", (project_id,))
+        return
+    # Projects without a class are shown as two groups: repositories and plain folders.
+    group = [row for row in conn.execute(
+        """SELECT id, pin_position, kind FROM projects
+           WHERE pin_position IS NOT NULL AND archived = 0 AND workspace_id IS ? AND class_id IS ?
+           ORDER BY pin_position, id""",
+        (project["workspace_id"], project["class_id"])).fetchall()
+        if project["class_id"] is not None or row["kind"] == project["kind"]]
+    index = next(i for i, row in enumerate(group) if row["id"] == project_id)
+    other = index + {"up": -1, "down": 1}.get(action, 0)
+    if other == index or not 0 <= other < len(group):
+        return
+    conn.execute("UPDATE projects SET pin_position = ? WHERE id = ?",
+                 (group[other]["pin_position"], project_id))
+    conn.execute("UPDATE projects SET pin_position = ? WHERE id = ?",
+                 (project["pin_position"], group[other]["id"]))
 
 
 def _rule_matches(rule: sqlite3.Row, project: sqlite3.Row) -> bool:

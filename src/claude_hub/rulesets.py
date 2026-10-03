@@ -111,8 +111,9 @@ def applies(ruleset: RuleSet, project: dict[str, Any] | None) -> bool:
     workspace = (project.get("workspace") or "").lower()
     if workspace and workspace in (name.lower() for name in ruleset.workspaces):
         return True
-    key = (project.get("key") or "").lower()
-    identities = {key, key.partition(":")[2], (project.get("name") or "").lower()}
+    identities = {(project.get("name") or "").lower()}
+    for key in (project.get("key") or "", *(project.get("aliases") or ())):
+        identities |= {key.lower(), key.lower().partition(":")[2]}
     return any(name in identities for name in ruleset.projects)
 
 

@@ -172,3 +172,5 @@ pre.result { background: var(--rule-soft); }
 .bar { height: .3rem; min-width: 4rem; margin-top: .2rem; background: var(--rule-soft); border-radius: 2px; overflow: hidden; }
 .bar span { display: block; height: 100%; background: var(--accent); }
 .bar.wide { height: .55rem; min-width: 10rem; margin-top: .35rem; }
+details.box summary { cursor: pointer; font-weight: 600; }
+button:disabled { opacity: .4; cursor: default; }

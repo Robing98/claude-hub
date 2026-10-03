@@ -10,9 +10,12 @@
 source = "https://platform.claude.com/docs/en/about-claude/pricing"
 read_on = "2026-10-03"
 
-# Optional: what you pay per month for your plans, in USD. With a value here,
-# the usage page compares the last 30 days with it. 0 turns the comparison off.
-plan_usd_per_month = 0
+# What you pay per month for your plans, in USD. The usage page compares the
+# last 30 days with it. 0 turns the comparison off.
+# One Max 20x plan: 200 USD per month, list price without tax.
+# Source: https://support.claude.com/en/articles/11049741-what-is-the-max-plan
+# Read on: 2026-10-03.
+plan_usd_per_month = 200
 
 [models."claude-fable-5-1"]
 input = 10.0

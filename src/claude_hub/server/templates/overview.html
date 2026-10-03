@@ -11,7 +11,7 @@
   <h3>{{ cls.name }}</h3>
   <div class="tablewrap">
   <table>
-    <thead><tr><th>Project</th><th class="num">Sessions</th><th>In-flight</th><th>Machines</th><th>Last activity</th></tr></thead>
+    <thead><tr><th>Project</th><th class="num">Sessions</th><th>In-flight</th><th>Machines</th><th>Last activity</th><th>Order</th></tr></thead>
     <tbody>
     {% for p in cls.projects %}
       <tr>
@@ -22,6 +22,18 @@
         <td>{{ m.state_counts(p.states) }}</td>
         <td>{{ p.machines | sort | join(", ") }}</td>
         <td class="nowrap" title="{{ p.last_activity or '' }}">{{ p.last_activity | reltime }}</td>
+        <td class="nowrap">
+          <form method="post" action="/projects/{{ p.id }}/pin" class="inline">
+            {% if p.pin_position is not none %}
+            <span class="pill active">pinned</span>
+            <button type="submit" name="action" value="up" class="quiet"{% if p.pin_first %} disabled{% endif %} aria-label="Move {{ p.name }} up">Up</button>
+            <button type="submit" name="action" value="down" class="quiet"{% if p.pin_last %} disabled{% endif %} aria-label="Move {{ p.name }} down">Down</button>
+            <button type="submit" name="action" value="unpin" class="quiet" aria-label="Unpin {{ p.name }}">Unpin</button>
+            {% else %}
+            <button type="submit" name="action" value="pin" class="quiet" aria-label="Pin {{ p.name }}">Pin</button>
+            {% endif %}
+          </form>
+        </td>
       </tr>
     {% endfor %}
     </tbody>
@@ -34,4 +46,18 @@
 {% else %}
 <p class="empty">No workspaces yet. Create them under <a href="/settings">Settings</a>, then assign projects from the <a href="/inbox">Inbox</a>.</p>
 {% endfor %}
+<p class="hint">A pinned project leads its group in the order you set. The other projects follow by last activity.</p>
+{% if archived %}
+<section>
+  <details class="box">
+    <summary>Archived projects <span class="count">{{ archived | length }}</span></summary>
+    <ul class="plain">
+      {% for p in archived %}
+      <li><span><a href="/projects/{{ p.id }}">{{ p.name }}</a> <span class="sub">{{ p.key | display_key }}</span></span>
+          <form method="post" action="/projects/{{ p.id }}/archive" class="inline"><button type="submit" class="quiet" aria-label="Restore {{ p.name }}">Restore</button></form></li>
+      {% endfor %}
+    </ul>
+  </details>
+</section>
+{% endif %}
 {% endblock %}

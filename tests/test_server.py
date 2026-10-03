@@ -477,3 +477,124 @@ def test_usage_goes_to_the_project_and_subagents_to_their_parent(client, app, da
     upload(client, "s1", to_jsonl(as_model(make_lines("s1", "/w", ["One"]), "claude-opus-4-5")),
            remote=remote, truncate=True)
     assert one(data_dir, "SELECT SUM(messages) AS n FROM usage_daily WHERE session_pk = ?", pk)["n"] == 1
+
+
+def project_id(data_dir, name):
+    return one(data_dir, "SELECT id FROM projects WHERE name = ?", name)["id"]
+
+
+def test_pinned_projects_lead_in_the_given_order(client, data_dir):
+    client.post("/settings/workspaces", data={"name": "Private"})
+    for index, name in enumerate(("alpha", "beta", "gamma")):
+        upload(client, f"s-{name}", to_jsonl(make_lines(f"s-{name}", "/w", ["Hi"], start=f"2026-10-0{index + 1}T10:00:0")),
+               remote=f"github.com/robing98/{name}")
+        client.post(f"/projects/{project_id(data_dir, name)}/assign", data={"target": "1"})
+
+    def order():
+        page = client.get("/overview").text
+        return sorted(("alpha", "beta", "gamma"), key=lambda name: page.index(f">{name}</a>"))
+
+    assert order() == ["gamma", "beta", "alpha"]          # by last activity
+    client.post(f"/projects/{project_id(data_dir, 'alpha')}/pin", data={"action": "pin"})
+    client.post(f"/projects/{project_id(data_dir, 'beta')}/pin", data={"action": "pin"})
+    assert order() == ["alpha", "beta", "gamma"]          # pinned first, in pin order
+    client.post(f"/projects/{project_id(data_dir, 'beta')}/pin", data={"action": "up"})
+    assert order() == ["beta", "alpha", "gamma"]
+    client.post(f"/projects/{project_id(data_dir, 'beta')}/pin", data={"action": "up"})   # already first
+    client.post(f"/projects/{project_id(data_dir, 'beta')}/pin", data={"action": "down"})
+    assert order() == ["alpha", "beta", "gamma"]
+    client.post(f"/projects/{project_id(data_dir, 'alpha')}/pin", data={"action": "unpin"})
+    assert order() == ["beta", "gamma", "alpha"]
+    assert client.post(f"/projects/{project_id(data_dir, 'alpha')}/pin", data={"action": "x"}).status_code == 400
+
+
+def test_archived_project_leaves_the_lists_and_keeps_its_usage(client, app, data_dir, monkeypatch):
+    from claude_hub.server import views
+
+    monkeypatch.setattr(views, "utcnow", lambda: datetime(2026, 10, 1, 10, 30, tzinfo=timezone.utc))
+    upload(client, "s1", to_jsonl(make_lines("s1", "/w", ["Old work"])), remote="github.com/robing98/old")
+    upload(client, "s2", to_jsonl(make_lines("s2", "/w", ["New work"])), remote="github.com/robing98/new")
+    old = project_id(data_dir, "old")
+    assert client.get("/status.json").json()["waiting"] == 2 and "Title of s1" in client.get("/").text
+
+    client.post(f"/projects/{old}/archive", data={"archived": "1"})
+    assert client.get("/status.json").json()["waiting"] == 1
+    assert "Title of s1" not in client.get("/").text
+    inbox = client.get("/inbox").text
+    assert ">new</a>" in inbox and ">old</a>" not in inbox
+    assert "/projects/%d\"" % old not in client.get("/rulesets").text
+    overview = client.get("/overview").text
+    assert "Archived projects" in overview and ">old</a>" in overview
+    # The usage of an archived project stays in the totals, as one row.
+    conn = db.connect(data_dir)
+    report = usage.report(conn, load_prices(None), 0)
+    conn.close()
+    assert {item["name"] for item in report["projects"]} == {"new", "Archived projects (1)"}
+    assert report["total"]["messages"] == 2
+    assert "archived" in client.get(f"/projects/{old}").text
+    assert client.get("/usage?days=0").status_code == 200
+
+    client.post(f"/projects/{old}/archive", data={})
+    assert client.get("/status.json").json()["waiting"] == 2
+
+
+def test_merged_project_takes_everything_and_later_uploads(client, data_dir):
+    upload(client, "s1", to_jsonl(make_lines("s1", "/w", ["One"])), remote="github.com/robing98/scheduler")
+    upload(client, "s2", to_jsonl(make_lines("s2", "/w", ["Two"])), remote="github.com/robing98/scheduler-old")
+    client.put("/api/v1/inventory", json={"repos": [
+        {"path": "/w/old", "remote": "github.com/robing98/scheduler-old",
+         "worktrees": [{"path": "/w/old", "is_main": True, "branch": "main"}]}]})
+    keep, gone = project_id(data_dir, "scheduler"), project_id(data_dir, "scheduler-old")
+
+    assert client.post(f"/projects/{gone}/merge", data={"target": str(gone)}).status_code == 400
+    response = client.post(f"/projects/{gone}/merge", data={"target": str(keep)}, follow_redirects=False)
+    assert response.status_code == 303 and response.headers["location"] == f"/projects/{keep}"
+    assert client.get(f"/projects/{gone}").status_code == 404
+    assert one(data_dir, "SELECT COUNT(*) AS n FROM sessions WHERE project_id = ?", keep)["n"] == 2
+    assert one(data_dir, "SELECT project_id FROM repos")["project_id"] == keep
+    page = client.get(f"/projects/{keep}").text
+    assert "Merged in: scheduler-old" in page and "built-in method" not in page
+
+    # A later upload and a later inventory for the old remote land in the target.
+    upload(client, "s3", to_jsonl(make_lines("s3", "/w", ["Three"])), remote="github.com/robing98/scheduler-old")
+    client.put("/api/v1/inventory", json={"repos": [{"path": "/w/old", "remote": "github.com/robing98/scheduler-old"}]})
+    assert one(data_dir, "SELECT COUNT(*) AS n FROM projects")["n"] == 1
+    assert one(data_dir, "SELECT project_id FROM sessions WHERE session_id = 's3'")["project_id"] == keep
+    # A rule set that names the old project applies to the target.
+    from claude_hub.rulesets import applies, parse_ruleset
+    from claude_hub.server.ingest import project_view
+    conn = db.connect(data_dir)
+    assert applies(parse_ruleset("x", "---\nprojects: github.com/robing98/scheduler-old\n---\nRule"),
+                   project_view(conn, keep))
+    conn.close()
+
+    # Separated again: the next upload creates the old project again.
+    client.post(f"/projects/{keep}/aliases/delete", data={"key": "git:github.com/robing98/scheduler-old"})
+    upload(client, "s4", to_jsonl(make_lines("s4", "/w", ["Four"])), remote="github.com/robing98/scheduler-old")
+    assert one(data_dir, "SELECT COUNT(*) AS n FROM projects")["n"] == 2
+
+
+def test_session_moved_by_hand_stays_where_it_was_put(client, data_dir):
+    lines = make_lines("s1", "/w", ["First", "Second"])
+    upload(client, "s1", to_jsonl(lines[:4]), remote="github.com/robing98/auto")
+    upload(client, "s2", to_jsonl(make_lines("s2", "/w", ["Other"])), remote="github.com/robing98/chosen")
+    auto, chosen = project_id(data_dir, "auto"), project_id(data_dir, "chosen")
+    pk = one(data_dir, "SELECT pk FROM sessions WHERE session_id = 's1'")["pk"]
+
+    assert client.post(f"/sessions/{pk}/project", data={"project": "999"}).status_code == 400
+    client.post(f"/sessions/{pk}/project", data={"project": str(chosen)})
+    assert "set by hand" in client.get(f"/sessions/{pk}").text
+    # The session continues with its old remote. The choice made by hand wins.
+    first = to_jsonl(lines[:4])
+    upload(client, "s1", to_jsonl(lines[4:]), offset=len(first), remote="github.com/robing98/auto")
+    assert one(data_dir, "SELECT project_id FROM sessions WHERE pk = ?", pk)["project_id"] == chosen
+    # Its usage counts for the chosen project.
+    conn = db.connect(data_dir)
+    assert usage.for_project(conn, load_prices(None), chosen, 0)["messages"] == 3
+    assert usage.for_project(conn, load_prices(None), auto, 0)["messages"] == 0
+    conn.close()
+
+    # Back to automatic: the next upload assigns it by its remote again.
+    client.post(f"/sessions/{pk}/project", data={})
+    upload(client, "s1", to_jsonl(lines), remote="github.com/robing98/auto", truncate=True)
+    assert one(data_dir, "SELECT project_id FROM sessions WHERE pk = ?", pk)["project_id"] == auto

@@ -37,7 +37,8 @@ TURN_LIMIT = 300
 STATE_ORDER = ["dirty", "unpushed", "missing", "stale", "merged", "idle", "active", "main"]
 
 SESSION_COLUMNS = """
-    s.*, m.name AS machine, a.label AS account, p.name AS project_name, p.kind AS project_kind
+    s.*, m.name AS machine, a.label AS account, p.name AS project_name, p.kind AS project_kind,
+    COALESCE(p.archived, 0) AS project_archived
 """
 SESSION_JOINS = """
     FROM sessions s
@@ -87,7 +88,7 @@ def back(request: Request, conn: sqlite3.Connection, fallback: str = "/") -> Red
 def load_worktrees(conn: sqlite3.Connection, project_id: int | None = None) -> list[dict[str, Any]]:
     query = """
         SELECT w.*, r.project_id, r.path AS repo_path, r.default_branch, r.machine_id,
-               m.name AS machine, p.name AS project_name
+               m.name AS machine, p.name AS project_name, p.archived AS project_archived
         FROM worktrees w
         JOIN repos r ON r.id = w.repo_id
         JOIN machines m ON m.id = r.machine_id
@@ -202,7 +203,8 @@ def parse_target(conn: sqlite3.Connection, target: str) -> tuple[int | None, int
 
 
 def nav(conn: sqlite3.Connection) -> dict[str, Any]:
-    inbox = conn.execute("SELECT COUNT(*) FROM projects WHERE workspace_id IS NULL").fetchone()[0]
+    inbox = conn.execute(
+        "SELECT COUNT(*) FROM projects WHERE workspace_id IS NULL AND archived = 0").fetchone()[0]
     return {"inbox_count": inbox}
 
 
@@ -216,13 +218,16 @@ def render(request: Request, conn: sqlite3.Connection, name: str, **context: Any
 @router.get("/")
 def now_page(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     cutoff = (utcnow() - timedelta(days=RECENT_DAYS)).strftime("%Y-%m-%dT%H:%M:%S")
-    recent = load_sessions(conn, "WHERE s.ended_at >= ?", (cutoff,), limit=500)
+    recent = [s for s in load_sessions(conn, "WHERE s.ended_at >= ?", (cutoff,), limit=500)
+              if not s["project_archived"]]
     groups = {status: [s for s in recent if s["status"] == status]
               for status in ("waiting", "running", "paused")}
 
     attention: dict[int, dict[str, Any]] = {}
     removable = stale = 0
     for wt in load_worktrees(conn):
+        if wt["project_archived"]:
+            continue
         if wt["state"] in ACTION_STATES:
             entry = attention.setdefault(
                 wt["project_id"],
@@ -251,7 +256,8 @@ def status_json(conn: sqlite3.Connection = Depends(get_conn)) -> dict[str, Any]:
     now = utcnow()
     cutoff = (now - timedelta(days=RECENT_DAYS)).strftime("%Y-%m-%dT%H:%M:%S")
     fresh = (now - timedelta(hours=STATUS_FRESH_HOURS)).strftime("%Y-%m-%dT%H:%M:%S")
-    recent = load_sessions(conn, "WHERE s.ended_at >= ?", (cutoff,), limit=500)
+    recent = [s for s in load_sessions(conn, "WHERE s.ended_at >= ?", (cutoff,), limit=500)
+              if not s["project_archived"]]
     groups = {
         "waiting": [s for s in recent if s["status"] == "waiting" and (s["ended_at"] or "") >= fresh],
         "running": [s for s in recent if s["status"] == "running"],
@@ -280,11 +286,19 @@ def overview(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     summaries = project_summaries(conn)
 
     def ordered(items):
-        return sorted(items, key=lambda p: p["last_activity"] or "", reverse=True)
+        # Pinned projects lead in the order you gave them. The rest follows by activity.
+        items = sorted(items, key=lambda p: p["last_activity"] or "", reverse=True)
+        pinned = sorted((p for p in items if p["pin_position"] is not None),
+                        key=lambda p: (p["pin_position"], p["id"]))
+        for index, project in enumerate(pinned):
+            project["pin_first"], project["pin_last"] = index == 0, index == len(pinned) - 1
+        return pinned + [p for p in items if p["pin_position"] is None]
 
+    archived = sorted((p for p in summaries.values() if p["archived"]),
+                      key=lambda p: p["name"].lower())
     tree = []
     for ws in conn.execute("SELECT * FROM workspaces ORDER BY position, name").fetchall():
-        mine = [p for p in summaries.values() if p["workspace_id"] == ws["id"]]
+        mine = [p for p in summaries.values() if p["workspace_id"] == ws["id"] and not p["archived"]]
         classes = []
         for cls in conn.execute(
             "SELECT * FROM classes WHERE workspace_id = ? ORDER BY position, name", (ws["id"],)
@@ -299,12 +313,13 @@ def overview(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
                         "projects": ordered(p for p in unclassed if p["kind"] == "dir")})
         tree.append({"name": ws["name"], "total": len(mine),
                      "classes": [c for c in classes if c["projects"]]})
-    return render(request, conn, "overview.html", tree=tree)
+    return render(request, conn, "overview.html", tree=tree, archived=archived)
 
 
 @router.get("/inbox")
 def inbox(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
-    items = [p for p in project_summaries(conn).values() if p["workspace_id"] is None]
+    items = [p for p in project_summaries(conn).values()
+             if p["workspace_id"] is None and not p["archived"]]
     items.sort(key=lambda p: p["last_activity"] or "", reverse=True)
     return render(request, conn, "inbox.html", projects=items, targets=targets(conn))
 
@@ -339,9 +354,14 @@ def project_page(project_id: int, request: Request, conn: sqlite3.Connection = D
     mine = [rs for rs in rulesets if applies(rs, view)]
     briefing = build_briefing(rulesets, view)
     spent = usage.for_project(conn, load_prices(request.app.state.pricing_file), project_id, 30)
+    others = conn.execute(
+        "SELECT id, name, key FROM projects WHERE id != ? AND archived = 0 ORDER BY name COLLATE NOCASE",
+        (project_id,)).fetchall()
+    aliases = conn.execute(
+        "SELECT * FROM project_aliases WHERE project_id = ? ORDER BY created_at", (project_id,)).fetchall()
     return render(request, conn, "project.html", project=project, sessions=sessions,
                   worktrees=worktrees, targets=targets(conn), current_target=current,
-                  rulesets=mine, briefing=briefing, spent=spent)
+                  rulesets=mine, briefing=briefing, spent=spent, others=others, aliases=aliases)
 
 
 @router.get("/sessions")
@@ -369,8 +389,11 @@ def session_page(pk: int, request: Request, all: int = 0,
         hidden = len(turns) - TURN_LIMIT
         turns = turns[-TURN_LIMIT:]
     spent = usage.for_session(conn, load_prices(request.app.state.pricing_file), pk)
+    choices = conn.execute(
+        "SELECT id, name FROM projects WHERE archived = 0 OR id = ? ORDER BY name COLLATE NOCASE",
+        (session["project_id"],)).fetchall()
     return render(request, conn, "session.html", session=session, turns=turns, hidden=hidden,
-                  spent=spent)
+                  spent=spent, choices=choices)
 
 
 @router.get("/usage")
@@ -507,7 +530,8 @@ def rulesets_page(request: Request, conn: sqlite3.Connection = Depends(get_conn)
     imported = conn.execute("SELECT COUNT(*) FROM rule_files").fetchone()[0]
     rows = []
     for row in conn.execute(
-        """SELECT p.id FROM projects p WHERE p.kind = 'repo' OR p.workspace_id IS NOT NULL
+        """SELECT p.id FROM projects p
+           WHERE (p.kind = 'repo' OR p.workspace_id IS NOT NULL) AND p.archived = 0
            ORDER BY p.name"""
     ).fetchall():
         project = project_view(conn, row["id"])
@@ -650,3 +674,57 @@ def set_session_rules(project_id: int, request: Request, hub_rules: str = Form("
     conn.execute("UPDATE projects SET hub_rules = ?, ai_ok = ? WHERE id = ?",
                  (1 if hub_rules == "1" else 0, 1 if ai_ok == "1" else 0, project_id))
     return back(request, conn, f"/projects/{project_id}")
+
+
+@router.post("/projects/{project_id}/archive")
+def archive_project(project_id: int, request: Request, archived: str = Form(""),
+                    conn: sqlite3.Connection = Depends(get_conn)):
+    conn.execute("UPDATE projects SET archived = ? WHERE id = ?",
+                 (1 if archived == "1" else 0, project_id))
+    return back(request, conn, f"/projects/{project_id}")
+
+
+@router.post("/projects/{project_id}/pin")
+def pin_project(project_id: int, request: Request, action: str = Form(...),
+                conn: sqlite3.Connection = Depends(get_conn)):
+    if action not in ("pin", "unpin", "up", "down"):
+        raise HTTPException(400, "Unknown action")
+    project_rules.move_pin(conn, project_id, action)
+    return back(request, conn, "/overview")
+
+
+@router.post("/projects/{project_id}/merge")
+def merge_project(project_id: int, target: int = Form(...),
+                  conn: sqlite3.Connection = Depends(get_conn)):
+    try:
+        project_rules.merge_projects(conn, project_id, target)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    conn.commit()
+    # The page of the merged project is gone, so the target is the place to return to.
+    return RedirectResponse(f"/projects/{target}", status_code=303)
+
+
+@router.post("/projects/{project_id}/aliases/delete")
+def delete_alias(project_id: int, request: Request, key: str = Form(...),
+                 conn: sqlite3.Connection = Depends(get_conn)):
+    conn.execute("DELETE FROM project_aliases WHERE project_id = ? AND key = ?", (project_id, key))
+    return back(request, conn, f"/projects/{project_id}")
+
+
+@router.post("/sessions/{pk}/project")
+def move_session(pk: int, request: Request, project: str = Form(""),
+                 conn: sqlite3.Connection = Depends(get_conn)):
+    if not project:
+        # Back to automatic: the next upload or re-parse assigns the session again.
+        conn.execute("UPDATE sessions SET project_manual = 0 WHERE pk = ?", (pk,))
+        return back(request, conn, f"/sessions/{pk}")
+    try:
+        project_id = int(project)
+    except ValueError as exc:
+        raise HTTPException(400, "Invalid project") from exc
+    if conn.execute("SELECT 1 FROM projects WHERE id = ?", (project_id,)).fetchone() is None:
+        raise HTTPException(400, "Unknown project")
+    conn.execute("UPDATE sessions SET project_id = ?, project_manual = 1 WHERE pk = ?",
+                 (project_id, pk))
+    return back(request, conn, f"/sessions/{pk}")
