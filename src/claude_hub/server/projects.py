@@ -72,6 +72,108 @@ def _mounted(paths: list[tuple[str, int]], folder: str) -> int | None:
     return hits.pop() if len(hits) == 1 else None
 
 
+# Mounts that belong to the Cowork session itself, not to a folder of the person.
+_SESSION_MOUNTS = {"outputs", "uploads", ".claude", "skills", "guide"}
+_SANDBOX = re.compile(r"^/sessions/[^/]+/mnt/([^/]+)(/.*)?$")
+# Folders that hold many unrelated things. The project is the first folder below one.
+_CONTAINER = re.compile(
+    r"^((?:[a-z]:)?/users/[^/]+/(?:onedrive[^/]*|documents|desktop|dropbox|google drive|"
+    r"icloud ?drive|nextcloud)/[^/]+)", re.I)
+_HOME = re.compile(r"^(?:[a-z]:)?/(?:users|home)/[^/]+(?:/|$)", re.I)
+_DRIVE_FOLDER = re.compile(r"^([a-z]:/[^/]+/[^/]+)", re.I)
+
+
+def host_dirs(work_dirs: dict[str, int] | None) -> tuple[dict[str, int], dict[str, int], dict[str, int]]:
+    """Return what a session touched as folders of the computer, and its connected folders.
+
+    Cowork names one folder in two ways: by its real path in file tools, and
+    by a sandbox path in shell commands. The sandbox path is translated when
+    the same session shows the real path of that folder. Folders of the
+    session itself are left out.
+
+    Each result maps a folder to how often it was touched: the real folders,
+    the connected folders whose real path is known, and the sandbox paths
+    that could not be translated.
+    """
+    host: dict[str, int] = {}
+    sandbox: list[tuple[str, str, int]] = []
+    for folder, count in (work_dirs or {}).items():
+        path = folder.replace("\\", "/").rstrip("/")
+        match = _SANDBOX.match(path)
+        if match:
+            if match.group(1).lower() not in _SESSION_MOUNTS:
+                sandbox.append((match.group(1), match.group(2) or "", count))
+        elif path.startswith("/sessions/") or cowork_root(path):
+            continue
+        elif path.startswith("/") or re.match(r"^[A-Za-z]:/", path):
+            host[path] = host.get(path, 0) + count
+
+    roots: dict[str, int] = {}
+    unknown: dict[str, int] = {}
+    seen = sorted(host, key=lambda item: -host[item])
+    for name, rest, count in sandbox:
+        # The real path of a connected folder ends in the name of its mount.
+        for path in seen:
+            parts = path.split("/")
+            index = next((i for i, part in enumerate(parts) if part.lower() == name.lower()), None)
+            if index is not None:
+                root = "/".join(parts[:index + 1])
+                roots.setdefault(root, 0)
+                host[root + rest] = host.get(root + rest, 0) + count
+                break
+        else:
+            unknown[f"/sessions/x/mnt/{name}{rest}"] = unknown.get(f"/sessions/x/mnt/{name}{rest}", 0) + count
+    for root in roots:
+        roots[root] = sum(count for path, count in host.items() if is_within(path, root))
+    return host, roots, unknown
+
+
+def folder_root(work_dirs: dict[str, int] | None) -> str | None:
+    """Pick the folder that a Cowork session worked in, when it is no repository.
+
+    A connected folder wins. Without one, the first folder below a container
+    such as OneDrive or Documents counts, or the second level of a drive.
+    """
+    host, roots, _ = host_dirs(work_dirs)
+    if roots:
+        best = max(roots, key=lambda root: roots[root])
+        if roots[best] >= 2:
+            return best
+    score: dict[str, int] = {}
+    for path, count in host.items():
+        match = _CONTAINER.match(path)
+        if not match and not _HOME.match(path):
+            # Application data and caches below the home folder are no projects.
+            match = _DRIVE_FOLDER.match(path)
+        if match:
+            score[match.group(1)] = score.get(match.group(1), 0) + count
+    if not score:
+        return None
+    best = max(score, key=lambda root: score[root])
+    return best if score[best] >= 3 else None
+
+
+def probe_dirs(conn: sqlite3.Connection, machine_id: int, limit: int = 60) -> list[str]:
+    """Folders that loose sessions worked in and that no known repository contains.
+
+    The collector checks whether they are repositories. The hub cannot: it
+    sees paths, not disks.
+    """
+    paths = _inventory_paths(conn, machine_id)
+    rows = conn.execute(
+        """SELECT s.work_dirs FROM sessions s LEFT JOIN projects p ON p.id = s.project_id
+           WHERE s.machine_id = ? AND s.work_dirs IS NOT NULL AND s.project_manual = 0
+                 AND s.parent_session_id IS NULL AND (p.id IS NULL OR p.kind = 'dir')""",
+        (machine_id,)).fetchall()
+    found: dict[str, int] = {}
+    for row in rows:
+        host, _, _ = host_dirs(json.loads(row["work_dirs"]))
+        for path, count in host.items():
+            if count >= 2 and not path.startswith("/tmp") and not _containing(paths, path):
+                found[path] = found.get(path, 0) + count
+    return sorted(found, key=lambda path: -found[path])[:limit]
+
+
 def _inventory_paths(conn: sqlite3.Connection, machine_id: int) -> list[tuple[str, int]]:
     rows = conn.execute(
         """SELECT r.project_id, r.path AS repo_path, w.path AS wt_path
@@ -113,7 +215,10 @@ def project_from_work_dirs(conn: sqlite3.Connection, machine_id: int,
         return None
     paths = _inventory_paths(conn, machine_id)
     score: dict[int, int] = {}
-    for folder, count in work_dirs.items():
+    # Sandbox paths of Cowork count under the real folder when the session shows it.
+    # The rest of them can still name a repository by the name of their mount.
+    candidates, _, unknown = host_dirs(work_dirs)
+    for folder, count in {**candidates, **unknown}.items():
         project_id = _containing(paths, folder) or _mounted(paths, folder)
         if project_id:
             score[project_id] = score.get(project_id, 0) + count
@@ -146,7 +251,13 @@ def resolve_session_project(
     if cwd:
         shared = cowork_root(cwd)
         if shared:
-            # Cowork sessions that touched no known repository share one project,
+            # No repository: the folder that the session worked in is the project.
+            folder = folder_root(work_dirs)
+            if folder:
+                # The name keeps its spelling. The key is compared without case on Windows.
+                return _get_or_create(conn, f"dir:{machine['name']}:{norm_path(folder)}", "dir",
+                                      folder.rsplit("/", 1)[-1])
+            # Cowork sessions that touched no folder of the person share one project,
             # so that each of them does not open an inbox entry of its own.
             return _get_or_create(conn, f"dir:{machine['name']}:{norm_path(shared)}", "dir", "Cowork")
         # A removed worktree belongs to the folder of its repository.

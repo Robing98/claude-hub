@@ -14,7 +14,7 @@ from pathlib import Path
 from . import briefing, export, mcp_server
 from . import config as config_module
 from .client import Client, HubError
-from .gitscan import build_inventory
+from .gitscan import build_inventory, resolve_dir
 from .rulescan import scan_repo, scan_user
 from .sessions import find_transcripts, sync_account
 
@@ -23,8 +23,42 @@ def log(message: str) -> None:
     print(f"{datetime.now():%Y-%m-%d %H:%M:%S} {message}", flush=True)
 
 
+PROBE_PAUSE = 24 * 3600
+
+
+def probe(folders: list[str], cache_dir: Path | None, repos_seen: set[str]) -> None:
+    """Check folders that the hub asks about, and report the repositories among them.
+
+    A Cowork session names no repository, only the folders it touched. A
+    folder that is no repository is not asked about again for a day.
+    """
+    known: dict[str, float] = {}
+    cache = cache_dir / "not-repositories.json" if cache_dir else None
+    if cache and cache.exists():
+        try:
+            known = {str(k): float(v) for k, v in json.loads(cache.read_text(encoding="utf-8")).items()}
+        except (ValueError, OSError):
+            known = {}
+    now = time.time()
+    known = {folder: stamp for folder, stamp in known.items() if now - stamp < PROBE_PAUSE}
+    for folder in folders:
+        if folder in known:
+            continue
+        info = resolve_dir(folder)
+        if info["main_repo"] or info["repo_root"]:
+            repos_seen.add(info["main_repo"] or info["repo_root"])
+        else:
+            known[folder] = now
+    if cache:
+        try:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            cache.write_text(json.dumps(known), encoding="utf-8")
+        except OSError:
+            pass
+
+
 def run_once(cfg: config_module.Config, sessions: bool = True, inventory: bool = True,
-             rules: bool = True) -> None:
+             rules: bool = True, cache_dir: Path | None = None) -> None:
     client = Client(cfg.server_url, cfg.token)
     _, hello = client.request("POST", "/api/v1/hello", {"platform": platform.system().lower()})
     repos_seen: set[str] = set()
@@ -33,6 +67,7 @@ def run_once(cfg: config_module.Config, sessions: bool = True, inventory: bool =
         _, answer = client.request("GET", "/api/v1/sessions/state")
         state = answer["sessions"]
         git_cache: dict[str, dict] = {}
+        probe(answer.get("probe_dirs") or [], cache_dir, repos_seen)
         cowork = [0, 0, 0]      # folders, sessions, bytes
         for account in cfg.accounts:
             if not account.config_dir.is_dir():
@@ -86,7 +121,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     while True:
         try:
             run_once(cfg, sessions=not args.no_sessions, inventory=not args.no_inventory,
-                     rules=not args.no_rules)
+                     rules=not args.no_rules, cache_dir=args.config.parent / "cache")
         except HubError as exc:
             log(f"error: {exc}")
             if not args.interval:

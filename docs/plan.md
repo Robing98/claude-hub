@@ -179,10 +179,31 @@ Built: token counts per session, day, and model from the transcripts, subagents 
 
 Open:
 
-- Built: Cowork sessions that ran on a computer are collected from the data folder of the desktop app and counted under the account "cowork".
+- Built: Cowork sessions that ran on a computer are collected from the data folder of the desktop app and counted under the account "cowork". A session goes to the repository it worked in, else to the folder it worked in, else to the shared project "Cowork".
 - Cowork sessions that ran in the cloud, chat, and Claude Design are not counted. They use the same subscription limits. A cloud session could report its own totals through the connector.
 - A view against the limits of the plan: how much of the week is used, and by which project.
 - Cost per result: per merged pull request, per roadmap item, per content unit.
+
+## Cerebellum: a layer above the hub
+
+Idea from 2026-10-03: one tool that organizes the day and automates routine work, with the calendar, mail, the Obsidian vault, and cloud folders. Not decided yet. The direction that fits what exists:
+
+- The cerebellum is a layer above tools, not a bigger hub. The hub stays the tool for Claude work. Every tool below the layer offers the same three things: a status feed, connector tools, and an API.
+- The layer stores as little as possible. Sources stay where they are: mail in Gmail, events in Google Calendar, notes in the vault, files in OneDrive.
+- Reuse what is already signed in instead of adding credentials to a server on the home network:
+  - Gmail and Google Calendar: through the connectors of Claude, inside a session.
+  - Phone, presence, and a calendar view: through Home Assistant, which already has the phone app and can hold the Google Calendar integration.
+  - OneDrive and the vault: through the folder that OneDrive syncs to the computer.
+- The thinking is done by Claude sessions on the plan, started on a schedule. They get context from the hub and file what needs a decision there.
+- Home Assistant interface: the status feed goes out (built). Next are decisions as notifications with answer buttons, a webhook that brings the answer back, and the events of the day read from Home Assistant.
+
+First loop to prove it, before anything broader: a morning brief and an evening note, written into the vault. It uses the calendar, mail, the sessions of the day, and the open decisions.
+
+Needed first:
+
+- A password for the web view and a backup of the data folder, before personal data arrives.
+- A budget per automation. Automations draw from the same plan limits as the work.
+- The computer with the vault must be on when a note is written.
 
 ## Ideas from 2026-10-03
 

@@ -30,7 +30,7 @@ def one(data_dir, query, *params):
 def test_api_requires_a_known_token(client):
     assert client.get("/api/v1/sessions/state", headers={"Authorization": "Bearer wrong"}).status_code == 401
     assert client.get("/api/v1/sessions/state", headers={"Authorization": ""}).status_code == 401
-    assert client.get("/api/v1/sessions/state").json() == {"sessions": {}}
+    assert client.get("/api/v1/sessions/state").json() == {"sessions": {}, "probe_dirs": []}
 
 
 def test_upload_then_append(client, data_dir):
@@ -669,3 +669,71 @@ def test_private_projects_are_masked_while_the_switch_is_on(client, data_dir):
     assert "secret" not in str(client.get("/status.json?hide=1").json())
     client.post(f"/projects/{secret}/private", data={})
     assert "Hide private projects" not in client.get("/").text
+
+
+def cowork_lines(session_id, reads=(), cds=()):
+    """A Cowork transcript: it starts in its own folder and touches the given paths."""
+    cwd = f"C:\\Users\\robin\\AppData\\Roaming\\Claude\\local-agent-mode-sessions\\a1\\o1\\local_{session_id}\\outputs"
+    lines = make_lines(session_id, cwd, ["Do the task"])
+    for index, path in enumerate(reads):
+        lines.append(tool_line(session_id, cwd, path, index))
+    for index, command in enumerate(cds):
+        lines.append({"type": "assistant", "sessionId": session_id, "cwd": cwd, "uuid": f"c{index}",
+                      "timestamp": f"2026-10-01T12:00:0{index}.000Z", "isSidechain": False,
+                      "message": {"id": f"cm{index}", "model": "claude-test", "stop_reason": "tool_use",
+                                  "content": [{"type": "tool_use", "id": f"ct{index}", "name": "Bash",
+                                               "input": {"command": command}}]}})
+    return to_jsonl(lines)
+
+
+def test_cowork_sessions_find_their_repository_or_folder(client, data_dir):
+    client.put("/api/v1/inventory", json={"repos": [
+        {"path": "D:\\WIP\\swutsch", "remote": "github.com/robing98/swutsch",
+         "worktrees": [{"path": "D:\\WIP\\swutsch", "is_main": True, "branch": "main"}]}]})
+
+    # The connected folder is a parent of the repository. Shell commands name it by the sandbox path.
+    upload(client, "cw-parent", cowork_lines("cw-parent", reads=["D:\\WIP\\swutsch\\src\\a.php"],
+           cds=["cd /sessions/busy-fox/mnt/WIP/swutsch/src && ls", "cd /sessions/busy-fox/mnt/WIP/swutsch/src && git status"]))
+    assert project_key(data_dir, "cw-parent") == "git:github.com/robing98/swutsch"
+
+    # A connected folder that is no repository becomes a project of its own.
+    upload(client, "cw-uni", cowork_lines("cw-uni",
+           reads=["C:\\Users\\robin\\OneDrive\\Uni\\BPP und BA\\notes\\a.md", "C:\\Users\\robin\\OneDrive\\Uni\\BPP und BA\\notes\\b.md"],
+           cds=['cd "/sessions/busy-fox/mnt/BPP und BA/notes" && ls']))
+    assert project_key(data_dir, "cw-uni") == "dir:desktop:c:/users/robin/onedrive/uni/bpp und ba"
+    assert one(data_dir, "SELECT name FROM projects WHERE key LIKE '%bpp und ba'")["name"] == "BPP und BA"
+
+    # Without a sandbox path, the first folder below OneDrive counts.
+    upload(client, "cw-vault", cowork_lines("cw-vault", reads=[
+        f"C:\\Users\\robin\\OneDrive\\Obisidian Vault\\Daily\\{day}.md" for day in ("mon", "tue", "wed")]))
+    assert project_key(data_dir, "cw-vault") == "dir:desktop:c:/users/robin/onedrive/obisidian vault"
+
+    # A session that touched only its own folder and application data stays in the shared project.
+    upload(client, "cw-none", cowork_lines("cw-none", reads=[
+        "C:\\Users\\robin\\AppData\\Roaming\\Claude\\local-agent-mode-sessions\\a1\\o1\\local_cw-none\\outputs\\report.md",
+        "C:\\Users\\robin\\AppData\\Local\\Temp\\x\\a.txt", "C:\\Users\\robin\\AppData\\Local\\Temp\\x\\b.txt",
+        "C:\\Users\\robin\\AppData\\Local\\Temp\\x\\c.txt"], cds=["cd /sessions/busy-fox/mnt/outputs && ls"]))
+    assert project_key(data_dir, "cw-none").endswith("/local-agent-mode-sessions")
+
+    # A repository that the hub does not know yet: first the folder, and the hub asks the collector about it.
+    upload(client, "cw-repo", cowork_lines("cw-repo", reads=[
+        f"D:\\GolleIT\\FgitsTickets\\src\\{name}.php" for name in ("a", "b", "c")]))
+    assert project_key(data_dir, "cw-repo") == "dir:desktop:d:/golleit/fgitstickets"
+    probes = client.get("/api/v1/sessions/state").json()["probe_dirs"]
+    assert "D:/GolleIT/FgitsTickets/src" in probes
+    assert not any("swutsch" in path or "local-agent-mode-sessions" in path for path in probes)
+    # The collector found the repository and reports it. The session moves, and the folder project goes.
+    client.put("/api/v1/inventory", json={"repos": [
+        {"path": "D:\\GolleIT\\FgitsTickets", "remote": "git.example.com/golle/fgitstickets",
+         "worktrees": [{"path": "D:\\GolleIT\\FgitsTickets", "is_main": True, "branch": "main"}]},
+        {"path": "D:\\WIP\\swutsch", "remote": "github.com/robing98/swutsch",
+         "worktrees": [{"path": "D:\\WIP\\swutsch", "is_main": True, "branch": "main"}]}]})
+    assert project_key(data_dir, "cw-repo") == "git:git.example.com/golle/fgitstickets"
+    assert one(data_dir, "SELECT COUNT(*) AS n FROM projects WHERE key = 'dir:desktop:d:/golleit/fgitstickets'")["n"] == 0
+    # The sessions that belong to folders stay where they are.
+    assert project_key(data_dir, "cw-uni").endswith("bpp und ba")
+    assert project_key(data_dir, "cw-parent") == "git:github.com/robing98/swutsch"
+
+    # One stray sandbox path is not enough to move a session into a repository.
+    upload(client, "cw-stray", cowork_lines("cw-stray", cds=["cd /sessions/busy-fox/mnt/swutsch && ls"]))
+    assert project_key(data_dir, "cw-stray").endswith("/local-agent-mode-sessions")

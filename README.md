@@ -88,7 +88,9 @@ This command has not been verified on Windows yet. Repositories inside WSL need 
 
 The collector also uploads the Cowork sessions that ran on the computer. The Claude desktop app keeps their transcripts in its data folder, under `local-agent-mode-sessions`. They appear with the account label `cowork`.
 
-- A Cowork session that worked in a connected folder is assigned to the project of that folder. The others share one project named "Cowork".
+- A Cowork session that worked in a repository is assigned to the project of that repository. The hub asks the collector about folders it does not know, and the collector checks whether they are repositories.
+- A Cowork session that worked in a folder without Git gets a project for that folder: the connected folder, or the first folder below a container such as OneDrive or Documents. Assign such a project to a workspace in the inbox, or add a path rule under **Settings**.
+- The remaining sessions share one project named "Cowork".
 - The collector reads only the transcripts in those folders. It reads no audit log and no instruction file there, and it installs no hook there.
 - To leave Cowork out, set `cowork = false` in the collector configuration. If the app keeps the sessions somewhere else, set `cowork_dir`.
 

@@ -319,3 +319,28 @@ def test_cowork_sessions_are_collected_and_sorted(repo: Path, tmp_path: Path, li
     assert (code_dir / "settings.json").exists()
     assert not list(root.rglob("settings.json"))
     assert cli.main(["--config", str(config), "check"]) == 0
+
+
+def test_probe_reports_repositories_and_remembers_what_is_none(repo: Path, tmp_path: Path, monkeypatch):
+    from claude_hub.collector import cli
+
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    calls: list[str] = []
+    real = cli.resolve_dir
+    monkeypatch.setattr(cli, "resolve_dir", lambda folder: calls.append(folder) or real(folder))
+
+    seen: set[str] = set()
+    cache = tmp_path / "cache"
+    folders = [str(repo / ".claude" / "worktrees" / "dirty"), str(plain), str(tmp_path / "gone")]
+    cli.probe(folders, cache, seen)
+    assert {Path(path).name for path in seen} == {"demo"}           # the main repository of the worktree
+    assert len(calls) == 3
+
+    # The two folders that are no repository are not asked about again today.
+    cli.probe(folders, cache, seen)
+    assert len(calls) == 4 and calls[-1] == folders[0]
+    # A broken cache file must not stop a run.
+    (cache / "not-repositories.json").write_text("{broken")
+    cli.probe(folders, cache, set())
+    cli.probe(folders, None, set())

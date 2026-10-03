@@ -161,11 +161,14 @@ def sessions_state(
         "SELECT session_id, raw_bytes, head_sha FROM sessions WHERE machine_id = ?",
         (machine["id"],),
     ).fetchall()
+    probes = projects.probe_dirs(conn, machine["id"])
     conn.commit()
     return {
         "sessions": {
             r["session_id"]: {"raw_bytes": r["raw_bytes"], "head_sha": r["head_sha"]} for r in rows
-        }
+        },
+        # Folders that sessions worked in and that may be repositories the hub does not know.
+        "probe_dirs": probes,
     }
 
 
