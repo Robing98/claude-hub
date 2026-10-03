@@ -48,9 +48,39 @@ def by_day(events: list[dict[str, Any]], today: date) -> list[dict[str, Any]]:
     return [{"label": day_label(day, today), "events": items} for day, items in sorted(days.items())]
 
 
+# A search with a text looks this far back and ahead when no days are given.
+SEARCH_BACK_DAYS = 3 * 365
+SEARCH_AHEAD_DAYS = 365
+# Without a text, a search returns every event of the span, so the span is limited.
+SEARCH_MAX_DAYS = 400
+
+
+def search_events(google: Any, today: date, q: str, start: str, end: str) -> dict[str, Any]:
+    """Events in a span that can lie in the past, newest first."""
+    q = q.strip()
+    begin = start.strip() or (today - timedelta(days=SEARCH_BACK_DAYS if q else 30)).isoformat()
+    finish = end.strip() or (today + timedelta(days=SEARCH_AHEAD_DAYS if q else 30)).isoformat()
+    result: dict[str, Any] = {"q": q, "start": begin, "end": finish, "events": [], "problems": []}
+    try:
+        span = (date.fromisoformat(finish[:10]) - date.fromisoformat(begin[:10])).days
+        if not q and span > SEARCH_MAX_DAYS:
+            raise GoogleError(400, f"Without a search text, the span can be at most {SEARCH_MAX_DAYS} days.")
+        found = google.agenda(begin, finish, q)
+    except ValueError:
+        result["problems"] = ["Write a day as 2026-11-03."]
+        return result
+    except GoogleError as exc:
+        result["problems"] = [str(exc)]
+        return result
+    events = [{**event, "clock": clock(event), "day": str(event["start"])[:10]} for event in found["events"]]
+    result["events"] = sorted(events, key=lambda item: str(item["start"]), reverse=True)
+    result["problems"] = found["problems"]
+    return result
+
+
 @router.get("/calendar")
-def calendar_page(request: Request, days: int = AGENDA_DAYS,
-                  conn: sqlite3.Connection = Depends(get_conn)):
+def calendar_page(request: Request, days: int = AGENDA_DAYS, q: str = "", start: str = "",
+                  end: str = "", conn: sqlite3.Connection = Depends(get_conn)):
     google = request.app.state.google
     days = max(1, min(days, MAX_AGENDA_DAYS))
     pending = conn.execute(
@@ -70,7 +100,10 @@ def calendar_page(request: Request, days: int = AGENDA_DAYS,
             agenda = google.overview(today.isoformat(), (today + timedelta(days=days - 1)).isoformat())
         except GoogleError as exc:
             agenda = {"events": [], "problems": [str(exc)]}
-    return render(request, conn, "calendar.html", pending=pending, decided=decided,
+    search = None
+    if (q.strip() or start.strip() or end.strip()) and accounts and not hidden:
+        search = search_events(google, today, q, start, end)
+    return render(request, conn, "calendar.html", pending=pending, decided=decided, search=search,
                   accounts=accounts, hidden=hidden, days=days, problems=agenda["problems"],
                   agenda=by_day(agenda["events"], today), event_count=len(agenda["events"]))
 

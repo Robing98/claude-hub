@@ -306,6 +306,42 @@ def test_agenda_merges_accounts_in_order(client, two_accounts):
     assert "timeMin=2026-10-05T00%3A00%3A00%2B02%3A00" in sent and "timeMax=2026-10-07" in sent
 
 
+def test_a_shared_calendar_is_read_once_through_its_owner(client, two_accounts):
+    # Each account shares its main calendar with the other, and both see the doctors' calendar.
+    cals = two_accounts.calendars
+    cals["robin@work.example"] += [
+        {"id": "robin@example.com", "summary": "Robin Golle", "accessRole": "reader", "selected": True},
+        {"id": "aerzte@group", "summary": "Ärzte", "accessRole": "writer", "selected": True}]
+    cals["robin@example.com"].append(
+        {"id": "robin@work.example", "summary": "Work", "accessRole": "writer", "selected": True})
+    answer = client.get("/api/v1/google/events", params={"start": "2026-10-05", "end": "2026-10-06"}).json()
+    assert [(e["summary"], e["account"]) for e in answer["events"]] == [
+        ("Checkup", "private"), ("Standup", "work"), ("Ihr Zahnarzttermin", "private")]
+    fetched = [call[1].split("/calendars/")[1].split("/events")[0] for call in two_accounts.calls
+               if "/events?" in call[1]]
+    assert sorted(fetched) == ["aerzte%40group", "robin%40example.com", "robin%40work.example"]
+    # Asked for one account, that account answers for everything it sees.
+    work = client.get("/api/v1/google/events", params={
+        "start": "2026-10-05", "end": "2026-10-06", "account": "work"}).json()["events"]
+    assert {e["account"] for e in work} == {"work"} and len(work) == 3
+
+
+def test_calendar_page_search_finds_past_events(client, two_accounts, monkeypatch):
+    from datetime import date
+    monkeypatch.setattr("claude_hub.server.calendar_views.local_today", lambda zone: date(2027, 1, 10))
+    page = client.get("/calendar", params={"q": "zahnarzt"}).text
+    assert "Ihr Zahnarzttermin" in page and "2026-10-06" in page and "09:00 to 09:30" in page
+    sent = [call[1] for call in two_accounts.calls if "q=zahnarzt" in call[1]][-1]
+    assert "timeMin=2024-01-11" in sent and "timeMax=2028-01-11" in sent
+    assert "No event matches" in client.get("/calendar", params={"q": "nothing-like-this"}).text
+    wide = client.get("/calendar", params={"start": "2020-01-01", "end": "2026-12-31"}).text
+    assert "at most 400 days" in wide
+    assert "Write a day as 2026-11-03." in client.get("/calendar", params={"q": "x", "start": "soon"}).text
+    assert "Checkup" in client.get("/calendar", params={"start": "2026-10-01", "end": "2026-10-31"}).text
+    hidden = client.get("/calendar", params={"q": "zahnarzt", "hide": 1}).text
+    assert "Ihr Zahnarzttermin" not in hidden
+
+
 def test_agenda_filters(client, two_accounts):
     params = {"start": "2026-01-01", "end": "2026-12-31"}
     found = client.get("/api/v1/google/events", params={**params, "q": "zahnarzt"}).json()["events"]

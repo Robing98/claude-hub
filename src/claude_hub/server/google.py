@@ -438,6 +438,10 @@ class Google:
             raise GoogleError(400, "The end of the span lies before its start.")
         events: list[dict[str, Any]] = []
         problems: list[str] = []
+        # A calendar that is shared between two connected accounts shows up in
+        # both. Read it once, through the account that owns it, or else through
+        # one that may write to it. The owner also sees events that a share hides.
+        chosen: dict[str, tuple[int, str, str | None, dict[str, Any]]] = {}
         for label in ([account] if account else self.store.labels()):
             try:
                 email = self._entry(label).get("email")
@@ -446,17 +450,27 @@ class Google:
                 if calendar and not wanted and account:
                     raise GoogleError(404, f"No calendar '{calendar}' in account '{label}'.")
                 for cal in wanted:
-                    found, more = self.events(label, cal["id"], start, end, query)
-                    events += [{**event, "account": label, "account_email": email,
-                                "calendar": cal["name"], "calendar_id": cal["id"]} for event in found]
-                    if more:
-                        # Say so, instead of passing a part off as the whole.
-                        problems.append(f"'{cal['name']}' of '{label}' has more events in this span than "
-                                        f"the first {len(found)}. Narrow the span or add a search text.")
+                    rank = 0 if cal["id"] == email else 1 if cal["can_write"] else 2
+                    if cal["id"] not in chosen or rank < chosen[cal["id"]][0]:
+                        chosen[cal["id"]] = (rank, label, email, cal)
             except GoogleError as exc:
                 if account:
                     raise
                 problems.append(str(exc))
+        for _, label, email, cal in chosen.values():
+            try:
+                found, more = self.events(label, cal["id"], start, end, query)
+            except GoogleError as exc:
+                if account:
+                    raise
+                problems.append(str(exc))
+                continue
+            events += [{**event, "account": label, "account_email": email,
+                        "calendar": cal["name"], "calendar_id": cal["id"]} for event in found]
+            if more:
+                # Say so, instead of passing a part off as the whole.
+                problems.append(f"'{cal['name']}' of '{label}' has more events in this span than "
+                                f"the first {len(found)}. Narrow the span or add a search text.")
         events.sort(key=lambda item: (str(item["start"])[:10], not item["all_day"], str(item["start"])))
         return {"events": events, "problems": problems}
 

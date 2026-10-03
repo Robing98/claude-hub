@@ -40,6 +40,41 @@
   {% endfor %}
 </section>
 
+{% if accounts and not hidden %}
+<section>
+  <h2>Search{% if search %} <span class="count">{{ search.events | length }}</span>{% endif %}</h2>
+  <form method="get" action="/calendar" class="inline">
+    <input type="search" name="q" value="{{ search.q if search else '' }}" placeholder="Text in the event" aria-label="Text in the event">
+    <label class="sub">from <input type="text" name="start" value="{{ search.start if search else '' }}" placeholder="2025-01-01" size="10"></label>
+    <label class="sub">to <input type="text" name="end" value="{{ search.end if search else '' }}" placeholder="2026-12-31" size="10"></label>
+    <button type="submit">Search</button>
+  </form>
+  <p class="hint">Finds past events as well. With a text and no days, the search covers the last three years and the next year.</p>
+  {% if search %}
+  {% for problem in search.problems %}<p class="notice">{{ problem }}</p>{% endfor %}
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Day</th><th>Time</th><th>Event</th><th>Calendar</th></tr></thead>
+    <tbody>
+    {% for event in search.events %}
+      <tr>
+        <td class="nowrap">{{ event.day }}</td>
+        <td class="nowrap">{{ event.clock }}</td>
+        <td>{% if event.link %}<a href="{{ event.link }}" rel="noopener">{{ event.summary }}</a>{% else %}{{ event.summary }}{% endif %}
+          {%- if event.location %}<div class="sub">{{ event.location }}</div>{% endif %}</td>
+        <td class="agenda-source">{{ event.calendar }} <span class="pill">{{ event.account }}</span>
+          {%- if event.from_mail %} <span class="pill">from mail</span>{% endif %}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" class="empty">No event matches between {{ search.start }} and {{ search.end }}.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+</section>
+{% endif %}
+
 <section>
   <h2>Next {{ days }} days <span class="count">{{ event_count }}</span></h2>
   <p class="filters" role="navigation" aria-label="Time span">
