@@ -11,7 +11,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from . import briefing, export, mcp_server
+from . import briefing, export, google_auth, mcp_server
 from . import config as config_module
 from .client import Client, HubError
 from .gitscan import build_inventory, resolve_dir
@@ -281,6 +281,46 @@ def cmd_mcp_install(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_google_add(args: argparse.Namespace) -> int:
+    cfg = config_module.load(args.config)
+    try:
+        email = google_auth.add_account(cfg, args.config, args.label, args.client)
+    except google_auth.SignInError as exc:
+        print(f"Failed: {exc}", file=sys.stderr)
+        return 1
+    print(f"Connected {email} as '{args.label}'. The hub holds the sign-in now.")
+    return 0
+
+
+def cmd_google_list(args: argparse.Namespace) -> int:
+    cfg = config_module.load(args.config)
+    try:
+        _, answer = Client(cfg.server_url, cfg.token, timeout=30).request(
+            "GET", "/api/v1/google/accounts")
+    except HubError as exc:
+        print(f"Failed: {exc}", file=sys.stderr)
+        return 1
+    for account in answer["accounts"]:
+        state = f"sign-in refused: {account['last_error']}" if account["last_error"] else "works"
+        print(f"{account['label']}: {account['email']} ({state})")
+    if not answer["accounts"]:
+        print("No Google account is connected. Run: hub google-add LABEL --client PATH_TO_CLIENT_JSON")
+    return 0
+
+
+def cmd_google_remove(args: argparse.Namespace) -> int:
+    cfg = config_module.load(args.config)
+    try:
+        _, answer = Client(cfg.server_url, cfg.token, timeout=30).request(
+            "DELETE", f"/api/v1/google/accounts/{args.label}")
+    except HubError as exc:
+        print(f"Failed: {exc}", file=sys.stderr)
+        return 1
+    print(f"Removed '{args.label}' from the hub." if answer["removed"]
+          else f"The hub has no account '{args.label}'.")
+    return 0
+
+
 def cmd_hooks_install(args: argparse.Namespace) -> int:
     cfg = config_module.load(args.config)
     for account in cfg.accounts:
@@ -347,6 +387,19 @@ def main(argv: list[str] | None = None) -> int:
     mcp_install.add_argument("--desktop-config", type=Path, default=None,
                              help="Path to claude_desktop_config.json, if it is not the default")
     mcp_install.set_defaults(func=cmd_mcp_install)
+
+    google = sub.add_parser("google", help="Google accounts that the hub reads and writes")
+    google_sub = google.add_subparsers(dest="google_command", required=True)
+    google_add = google_sub.add_parser("add", help="Sign a Google account in, in the browser")
+    google_add.add_argument("label", help="Short name for the account, for example private or work")
+    google_add.add_argument("--client", type=Path, default=None,
+                            help="The client JSON file from the Google Cloud console. "
+                                 "Needed once per computer.")
+    google_add.set_defaults(func=cmd_google_add)
+    google_sub.add_parser("list", help="Show the connected accounts").set_defaults(func=cmd_google_list)
+    google_remove = google_sub.add_parser("remove", help="Delete a sign-in from the hub")
+    google_remove.add_argument("label")
+    google_remove.set_defaults(func=cmd_google_remove)
 
     hooks = sub.add_parser("hooks", help="Manage the Claude Code hook")
     hooks_sub = hooks.add_subparsers(dest="hooks_command", required=True)

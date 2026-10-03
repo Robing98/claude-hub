@@ -266,8 +266,43 @@ PRIVATE_SCHEMA = """
 ALTER TABLE projects ADD COLUMN private INTEGER NOT NULL DEFAULT 0;
 """
 
+# Calendar events that a session proposes, and what the hub wrote to or read
+# from a Google account. The sign-ins themselves are not in the database.
+GOOGLE_SCHEMA = """
+CREATE TABLE event_proposals (
+    id INTEGER PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    machine_id INTEGER REFERENCES machines(id) ON DELETE SET NULL,
+    account TEXT NOT NULL,
+    calendar_id TEXT NOT NULL,
+    calendar_name TEXT NOT NULL DEFAULT '',
+    summary TEXT NOT NULL,
+    starts TEXT NOT NULL,
+    ends TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    location TEXT NOT NULL DEFAULT '',
+    private INTEGER NOT NULL DEFAULT 0,
+    reason TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending',
+    decided_at TEXT,
+    event_link TEXT,
+    error TEXT
+);
+CREATE INDEX event_proposals_status ON event_proposals(status);
+CREATE TABLE google_log (
+    id INTEGER PRIMARY KEY,
+    at TEXT NOT NULL,
+    machine_id INTEGER REFERENCES machines(id) ON DELETE SET NULL,
+    account TEXT NOT NULL,
+    action TEXT NOT NULL,
+    detail TEXT NOT NULL DEFAULT ''
+);
+"""
+
 MIGRATIONS = [SCHEMA, RULES_SCHEMA, WORK_DIRS_SCHEMA, AI_SWITCH_SCHEMA, HUB_RULES_SCHEMA,
-              USAGE_SCHEMA, ORGANIZE_SCHEMA, PROPOSALS_SCHEMA, CONNECTOR_SCHEMA, PRIVATE_SCHEMA]
+              USAGE_SCHEMA, ORGANIZE_SCHEMA, PROPOSALS_SCHEMA, CONNECTOR_SCHEMA, PRIVATE_SCHEMA,
+              GOOGLE_SCHEMA]
 
 
 def init(data_dir: Path) -> None:

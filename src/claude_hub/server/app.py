@@ -6,14 +6,15 @@ import base64
 import os
 import secrets
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request
-from fastapi.responses import PlainTextResponse, Response
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .. import __version__
 from ..rulesets import read_folder
-from . import db, ingest, views
+from . import calendar_views, db, google, google_api, ingest, views
 
 
 def drop_shipped_edits(shipped: Path, live: Path) -> None:
@@ -37,13 +38,35 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     drop_shipped_edits(app.state.rulesets_dir, app.state.live_rulesets_dir)
     pricing = os.environ.get("HUB_PRICING_FILE")
     app.state.pricing_file = Path(pricing).resolve() if pricing else Path.cwd() / "pricing.toml"
+    app.state.google = google.Google(
+        google.Store(data_path), time_zone=os.environ.get("HUB_TIME_ZONE", google.DEFAULT_TIME_ZONE))
     app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
     app.include_router(ingest.router)
+    app.include_router(google_api.router)
     app.include_router(views.router)
+    app.include_router(calendar_views.router)
+
+    @app.exception_handler(google.GoogleError)
+    async def google_failed(request: Request, exc: google.GoogleError) -> JSONResponse:
+        # A problem on the side of Google is not a fault of the caller.
+        status = exc.status if 400 <= exc.status < 500 else 502
+        return JSONResponse({"detail": str(exc)}, status_code=status)
 
     @app.get("/healthz", response_class=PlainTextResponse)
     def healthz() -> str:
         return "ok"
+
+    @app.middleware("http")
+    async def same_site_forms(request: Request, call_next):
+        # The pages have no sign-in, so any web page that the browser has open
+        # could send a form to the hub. A browser names the page that a form
+        # comes from. Forms from other sites are refused. The API is exempt:
+        # it needs a token, and its callers are no browsers.
+        if request.method not in ("GET", "HEAD", "OPTIONS") and not request.url.path.startswith("/api/"):
+            origin = request.headers.get("origin")
+            if origin is not None and urlsplit(origin).netloc != request.headers.get("host", ""):
+                return PlainTextResponse("This form was sent from another site.", status_code=403)
+        return await call_next(request)
 
     password = os.environ.get("HUB_UI_PASSWORD")
     if password:

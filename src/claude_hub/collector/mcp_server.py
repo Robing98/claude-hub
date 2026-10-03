@@ -1,4 +1,4 @@
-"""A local MCP server that gives the hub rules to Cowork and other MCP clients.
+"""A local MCP server that gives the hub to Cowork and other MCP clients: rules, calendars, mail.
 
 It speaks MCP over standard input and output with the standard library
 only, so that it runs wherever the collector runs. The Claude desktop app
@@ -14,7 +14,7 @@ from typing import Any, BinaryIO
 from urllib.parse import urlencode
 
 from .. import __version__
-from . import briefing
+from . import briefing, google_tools
 from .client import Client, HubError
 from .config import Config
 
@@ -25,7 +25,8 @@ INSTRUCTIONS = (
     "The hub holds the rules of Robin's projects. Before you work in a project folder, call "
     "hub_rules with the path of that folder and follow what it returns. When the returned text "
     "lists more rule sets, load one with hub_ruleset before the work it covers. Never edit rule "
-    "files in a project. To change a rule, call hub_propose_rule. Robin decides in the hub."
+    "files in a project. To change a rule, call hub_propose_rule. Robin decides in the hub.\n\n"
+    + google_tools.INSTRUCTIONS
 )
 
 FOLDER = {"type": "string",
@@ -72,6 +73,7 @@ TOOLS = [
             "required": ["ruleset", "text", "reason"],
         },
     },
+    *google_tools.TOOLS,
 ]
 
 
@@ -107,6 +109,9 @@ def call_tool(cfg: Config, cache_dir: Path, name: str, args: dict[str, Any]) -> 
             str(args.get("text") or ""), str(args.get("reason") or ""),
             str(args.get("mode") or "add"), str(args.get("source") or "Cowork"))
         return _text(message, error=not filed)
+    if name in google_tools.NAMES:
+        text, failed = google_tools.call(cfg, name, args)
+        return _text(text, error=failed)
     return _text(f"Unknown tool: {name}", error=True)
 
 

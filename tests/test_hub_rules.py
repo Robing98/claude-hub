@@ -273,7 +273,7 @@ def test_local_connector_serves_rules_and_files_proposals(tmp_path, live_server,
     assert init["protocolVersion"] == "2025-03-26" and init["capabilities"] == {"tools": {}}
     assert init["serverInfo"]["name"] == "claude-hub" and "hub_rules" in init["instructions"]
     tools = {tool["name"]: tool for tool in by_id[2]["result"]["tools"]}
-    assert set(tools) == {"hub_rules", "hub_ruleset", "hub_propose_rule"}
+    assert {"hub_rules", "hub_ruleset", "hub_propose_rule"} <= set(tools)
     assert all(tool["inputSchema"]["type"] == "object" and tool["description"] for tool in tools.values())
 
     rules = by_id[3]["result"]

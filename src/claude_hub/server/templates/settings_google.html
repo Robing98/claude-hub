@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% set active = "settings" %}
+{% block title %}Google accounts · Claude hub{% endblock %}
+{% block main %}
+<h1>Settings</h1>
+{{ m.settings_tabs("google") }}
+
+<p class="lead">The Google connection of a Claude app holds one Google account. The hub holds as many as you connect here, and every session reads and writes them through the connector. The hub reads and writes calendar events. It reads mail and sends none.</p>
+
+<section>
+  <h2>Connected accounts</h2>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Label</th><th>Account</th><th>State</th><th>Connected</th><th></th></tr></thead>
+    <tbody>
+    {% for account in accounts %}
+      <tr>
+        <td class="mono">{{ account.label }}</td>
+        <td>{{ account.email or "" }}</td>
+        <td>{% if account.last_error %}<span class="pill unpushed">needs attention</span><div class="sub">{{ account.last_error }}</div>{% else %}<span class="pill merged">works</span>{% endif %}</td>
+        <td class="nowrap" title="{{ account.added_at or '' }}">{{ account.added_at | reltime }}</td>
+        <td><form method="post" action="/settings/google/{{ account.label }}/remove" class="inline"><button type="submit" class="quiet">Remove</button></form></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="empty">No account yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="hint">"Remove" deletes the sign-in from the hub. To withdraw the permission at Google as well, open <strong>Google Account</strong> &gt; <strong>Security</strong> &gt; <strong>Your connections to third-party apps and services</strong>.</p>
+</section>
+
+<section>
+  <h2>Once: create the Google project</h2>
+  <p class="hint">Google gives access only to an app that is registered with it. You register your own, so that no third party is involved. The labels in the Google Cloud console can differ from the ones here.</p>
+  <ol class="steps">
+    <li>Open <code>console.cloud.google.com</code> with your private Google account and create a project, for example <code>claude-hub</code>.</li>
+    <li>Under <strong>APIs &amp; Services</strong> &gt; <strong>Library</strong>, enable <strong>Google Calendar API</strong> and <strong>Gmail API</strong>.</li>
+    <li>Under <strong>Google Auth Platform</strong> (earlier: <strong>OAuth consent screen</strong>), set up the app: any name, your address as support and developer contact, audience <strong>External</strong>.</li>
+    <li>Under <strong>Audience</strong>, select <strong>Publish app</strong>, so that the status is <strong>In production</strong>. In the status <strong>Testing</strong>, Google ends every sign-in after 7 days.</li>
+    <li>Under <strong>Clients</strong>, create a client with the application type <strong>Desktop app</strong>, and download its JSON file.</li>
+  </ol>
+  <p class="hint">Google does not review the app, so the sign-in shows the warning "Google hasn't verified this app". That is expected for an app that only you use. If the work account refuses the sign-in, the administrator of the work domain must allow the app: <strong>Admin console</strong> &gt; <strong>Security</strong> &gt; <strong>API controls</strong>.</p>
+</section>
+
+<section>
+  <h2>Per account: sign in</h2>
+  <ol class="steps">
+    <li>In the hub repository, on a computer with a browser, run:
+      <pre class="code">hub google-add private --client PATH_TO_CLIENT_JSON</pre>
+      <code>private</code> is the label of the account, and <code>PATH_TO_CLIENT_JSON</code> is the file from the last step of the project setup. The command keeps a copy of the file beside the collector configuration, so later calls need no <code>--client</code>.</li>
+    <li>The browser opens. Select the Google account, select <strong>Advanced</strong> &gt; <strong>Go to claude-hub (unsafe)</strong> on the warning, and tick every permission.</li>
+    <li>The command prints the address of the account. Reload this page: the account shows "works".</li>
+    <li>Repeat for the second account:
+      <pre class="code">hub google-add work</pre></li>
+  </ol>
+  <p class="hint">Sessions reach the accounts through the connector. If it is not set up yet, follow <a href="/settings/connector">Cowork connector (MCP)</a>. After an update of the hub, quit the Claude desktop app and start it again, so that it loads the new tools.</p>
+</section>
+
+<section>
+  <h2>What the hub may do</h2>
+  <ul class="steps">
+    {% for scope in scopes %}<li><code>{{ scope }}</code></li>{% endfor %}
+  </ul>
+  <ul class="steps">
+    <li>The sign-ins are in <code>google.json</code> in the data folder of the server. Only the service user can read the file. No page and no API answer shows them.</li>
+    <li>Every call needs the token of a machine, the same one that the collector uses.</li>
+    <li>The hub creates and changes events. It deletes none.</li>
+    <li>Times without a time zone count as {{ time_zone }}. Set <code>HUB_TIME_ZONE</code> on the server to change that.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Last activity</h2>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>When</th><th>Account</th><th>What</th><th>Detail</th><th>Machine</th></tr></thead>
+    <tbody>
+    {% for entry in entries %}
+      <tr>
+        <td class="nowrap" title="{{ entry.at }}">{{ entry.at | reltime }}</td>
+        <td class="mono">{{ entry.account }}</td>
+        <td>{{ entry.action }}</td>
+        <td>{{ "(hidden)" if nav.hiding else entry.detail }}</td>
+        <td>{{ entry.machine or "hub" }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="empty">Nothing yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="hint">The list holds what was written, and which mail was searched or read. It does not hold calendar reads.</p>
+</section>
+{% endblock %}

@@ -197,11 +197,33 @@ Idea from 2026-10-03: one tool that organizes the day and automates routine work
 - The thinking is done by Claude sessions on the plan, started on a schedule. They get context from the hub and file what needs a decision there.
 - Home Assistant interface: the status feed goes out (built). Next are decisions as notifications with answer buttons, a webhook that brings the answer back, and the events of the day read from Home Assistant.
 
-First loop to prove it, before anything broader: a morning brief and an evening note, written into the vault. It uses the calendar, mail, the sessions of the day, and the open decisions.
+Decided on 2026-10-03: the direction above. The first loop is recurring appointments, not a daily brief. No password for the web view for now.
+
+First loop, recurring appointments:
+
+- The rules live in the vault, in `Cerebellum/Wiederkehrende Termine.md`: a checkup every six months whose date arrives by post, and a dentist appointment six months after the last one and then once per calendar year.
+- A weekly session reads the rules and both Google calendars. Six weeks before something is due and not booked, it reminds: to book the dentist, or to ask where the letter for the checkup is.
+- Built on 2026-10-03: the hub holds the sign-ins of several Google accounts and offers calendar and mail tools through the connector. This replaces the Google connector of the Claude app, which holds one account. Sessions propose events, and Robin accepts them on the **Calendar** page.
+- Next: sign both accounts in, read the last dentist appointment and the last checkup, fill the note, and set up the weekly session.
+
+Decided on 2026-10-03, later the same day: the Google sign-ins live on the home server, for Calendar and Gmail. This reverses the point about credentials on the server. The reasons: two accounts, checks that run without an open session, and Home Assistant. Gmail is read-only.
+
+Brain parts, as the order of what comes next:
+
+1. Hippocampus: a knowledge service over the vault, the rule sets, and session summaries, queried through the connector. Agents ask instead of rereading.
+2. Prefrontal cortex: one decision queue for all lanes, answerable from the phone. Event proposals and rule proposals are its first two kinds.
+3. Sleep: a nightly job that condenses the sessions of the day into notes and rule proposals.
+4. Thalamus: a filter for mail, post, and notifications.
+
+A browser of its own for agents: a Chromium with a lasting profile and a remote view, so that agent work does not open tabs in Robin's Chrome windows. Sign-ins stay in the profile. Robin signs in himself, with the 1Password extension in that profile. Agents never receive a password. Open: where it runs. The decision "no Docker and no agent sessions on the Proxmox host" speaks for the desktop. The remote view needs a password of its own, because it shows signed-in sessions.
+
+More Claude accounts for fixed functions: the hub side is one configuration folder per account and a label per function. The hub does not switch accounts when a limit is reached, and it uses only the official Claude apps. Ask support before the second account.
+
+Folder order, an idea for the hub: the collector already walks the drives. It can report what makes a drive untidy: several copies of one repository, source folders without Git, and release archives beside working copies. A first look at drive D on the desktop found the GolleIT plugins in four places.
 
 Needed first:
 
-- A password for the web view and a backup of the data folder, before personal data arrives.
+- A backup of the data folder. Personal data has arrived: the folder holds the Google sign-ins.
 - A budget per automation. Automations draw from the same plan limits as the work.
 - The computer with the vault must be on when a note is written.
 

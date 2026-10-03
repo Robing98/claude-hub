@@ -180,3 +180,9 @@ textarea { width: 100%; max-width: 60rem; font-family: var(--mono); font-size: .
 pre.code { border: 1px solid var(--rule); border-radius: 4px; background: var(--surface); margin: .4rem 0; max-width: 60rem; color: var(--ink); }
 .top .privacy { margin-left: auto; }
 button.pressed { color: var(--amber); border-color: currentColor; background: var(--amber-bg); font-weight: 600; }
+
+.fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: .5rem .8rem; margin: .5rem 0; max-width: 60rem; }
+.fields label { display: grid; gap: .15rem; font-size: .8rem; color: var(--muted); }
+.fields input[type=text] { width: 100%; }
+.agenda-time { width: 8rem; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.agenda-source { width: 22rem; color: var(--muted); font-size: .85rem; }

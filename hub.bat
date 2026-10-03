@@ -28,6 +28,9 @@ if /i "%CMD%"=="rules-export" goto rules_export
 if /i "%CMD%"=="rules-pull" goto rules_pull
 if /i "%CMD%"=="mcp-install" goto mcp_install
 if /i "%CMD%"=="mcp-remove" goto mcp_remove
+if /i "%CMD%"=="google-add" goto google_add
+if /i "%CMD%"=="google-list" goto google_list
+if /i "%CMD%"=="google-remove" goto google_remove
 if /i "%CMD%"=="hooks-install" goto hooks_install
 if /i "%CMD%"=="hooks-remove" goto hooks_remove
 if /i "%CMD%"=="wsl-hooks-install" goto wsl_hooks_install
@@ -61,6 +64,9 @@ echo   hooks-install  Make Claude Code sessions fetch their rules from the hub
 echo   hooks-remove   Undo hooks-install
 echo   mcp-install    Give Cowork the hub tools through the Claude desktop app
 echo   mcp-remove     Undo mcp-install
+echo   google-add LABEL [--client FILE]  Sign a Google account in for the hub
+echo   google-list    Show the Google accounts of the hub
+echo   google-remove LABEL  Delete a Google sign-in from the hub
 echo.
 echo Inside WSL on this machine:
 echo   wsl-setup      Install or update the collector inside WSL
@@ -125,6 +131,26 @@ goto end
 
 :mcp_remove
 "%PY%" -m claude_hub.collector.cli mcp install --remove
+goto end
+
+:google_add
+if "%~1"=="" (
+  echo Usage: hub google-add LABEL [--client PATH_TO_CLIENT_JSON]
+  goto end
+)
+"%PY%" -m claude_hub.collector.cli google add %1 %2 %3
+goto end
+
+:google_list
+"%PY%" -m claude_hub.collector.cli google list
+goto end
+
+:google_remove
+if "%~1"=="" (
+  echo Usage: hub google-remove LABEL
+  goto end
+)
+"%PY%" -m claude_hub.collector.cli google remove %1
 goto end
 
 :hooks_install

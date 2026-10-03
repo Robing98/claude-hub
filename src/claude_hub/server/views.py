@@ -248,8 +248,10 @@ def nav(conn: sqlite3.Connection, request: Request) -> dict[str, Any]:
     proposals = conn.execute(
         "SELECT COUNT(*) FROM rule_proposals WHERE status = 'pending'").fetchone()[0]
     private = conn.execute("SELECT COUNT(*) FROM projects WHERE private = 1").fetchone()[0]
+    events = conn.execute(
+        "SELECT COUNT(*) FROM event_proposals WHERE status = 'pending'").fetchone()[0]
     return {"inbox_count": inbox, "proposal_count": proposals, "private_count": private,
-            "hiding": hiding(request)}
+            "event_count": events, "hiding": hiding(request)}
 
 
 def render(request: Request, conn: sqlite3.Connection, name: str, **context: Any):
@@ -321,10 +323,16 @@ def status_json(request: Request, conn: sqlite3.Connection = Depends(get_conn)) 
     if proposals:
         headline = ", ".join(part for part in (
             headline, f"{proposals} rule proposal{'s' if proposals != 1 else ''}") if part)
+    events = conn.execute(
+        "SELECT COUNT(*) FROM event_proposals WHERE status = 'pending'").fetchone()[0]
+    if events:
+        headline = ", ".join(part for part in (
+            headline, f"{events} proposed event{'s' if events != 1 else ''}") if part)
     return {
         **{name: len(items) for name, items in groups.items()},
         "active": len(listed),
         "proposals": proposals,
+        "event_proposals": events,
         "headline": headline or "Nothing open",
         "detail": detail,
         "sessions": [{"status": s["status"], "project": s["project_name"], "title": s["title"],

@@ -114,6 +114,8 @@ The collector also uploads the Cowork sessions that ran on the computer. The Cla
 | `hub rules-export [DIR]` | Write the rules of a project into its folder, hidden from Git |
 | `hub rules-pull` | Bring rule sets that were changed in the hub into `rulesets/` |
 | `hub mcp-install` | Give Cowork the hub tools through the Claude desktop app |
+| `hub google-add LABEL` | Sign a Google account in for the hub, in the browser |
+| `hub google-list` | Show the Google accounts of the hub |
 
 The server address and the container ID are set at the top of `hub.bat`.
 
@@ -186,6 +188,24 @@ The cost is an API-equivalent: what the same tokens cost on the API. A subscript
 - To compare the last 30 days with what you pay, set `plan_usd_per_month` in `pricing.toml`.
 - Days are UTC days.
 
+## Calendar and mail
+
+The Google connection of a Claude app holds one Google account. The hub holds as many as you sign in, so that every session reaches the calendars of a private and a work account through one place.
+
+- The **Calendar** page lists the events of every account in order of time, and the events that sessions propose.
+- Sessions use the connector tools: `calendar_list`, `calendar_agenda`, `calendar_propose_event`, `calendar_create_event`, `calendar_update_event`, `mail_search`, and `mail_read`.
+- A proposed event reaches a calendar only when you accept it on the **Calendar** page. You can change it first. A session writes an event at once only when you confirmed that event in the chat.
+- The hub creates and changes events. It deletes none. It reads mail and sends none.
+- **Settings** > **Google accounts** holds the setup steps, the state of each account, and the last activity.
+
+To connect an account:
+
+1. Create a Google Cloud project with the Calendar API, the Gmail API, and a client of the type **Desktop app**. The settings page lists the steps.
+2. Run `hub google-add private --client PATH_TO_CLIENT_JSON`. Replace `private` with a label for the account and `PATH_TO_CLIENT_JSON` with the downloaded client file. The file is needed once per computer.
+3. Sign in at Google in the browser window that opens. The command hands the sign-in to the hub and prints the address of the account.
+
+The sign-ins are in `google.json` in the data folder, readable by the service user only. Times without a time zone count as `Europe/Berlin`. Set `HUB_TIME_ZONE` on the server to change that.
+
 ## Worktree states
 
 | State | Meaning |
@@ -214,7 +234,9 @@ Squash merges are not detected yet, because that needs the pull request state fr
 
 - Transcripts contain code and can contain secrets. Keep the server inside your VPN, and set `HUB_UI_PASSWORD` if other people share that network.
 - Each collector token identifies one machine. The server stores only a hash of it.
-- The forms of the web view have no CSRF protection. Do not expose the server to the internet.
+- The web view has no sign-in unless `HUB_UI_PASSWORD` is set. It refuses forms that another website sends, and nothing more. Do not expose the server to the internet.
+- The data folder holds the sign-ins of the Google accounts. Whoever reads `google.json` can read that mail and write to those calendars. Keep backups of the data folder as safe as the server.
+- The API for Google needs the token of a machine. A session on any machine with a token can read the mail of every connected account.
 - Back up the `hub-data` volume. After Claude Code deletes old transcripts (30 days by default), the server holds the only copy.
 
 ## Limits
