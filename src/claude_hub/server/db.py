@@ -300,9 +300,96 @@ CREATE TABLE google_log (
 );
 """
 
+# Git lock files that a collector found. One row per lock, so that the page
+# can show where locks are left behind and how often.
+LOCKS_SCHEMA = """
+CREATE TABLE git_locks (
+    id INTEGER PRIMARY KEY,
+    machine_id INTEGER NOT NULL REFERENCES machines(id) ON DELETE CASCADE,
+    path TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    locked_at INTEGER NOT NULL,
+    size INTEGER NOT NULL DEFAULT 0,
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    state TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    UNIQUE (machine_id, path, locked_at)
+);
+"""
+
+# Routines: things that come back on a schedule, such as a checkup or a
+# request for a new prescription. The hub reminds. For a routine where the
+# person chose it, the hub also sends the prepared mail.
+ROUTINES_SCHEMA = """
+CREATE TABLE routines (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    every INTEGER NOT NULL,
+    unit TEXT NOT NULL,
+    anchor TEXT NOT NULL DEFAULT 'done',
+    lead_days INTEGER NOT NULL DEFAULT 14,
+    next_due TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    mail_to TEXT NOT NULL DEFAULT '',
+    mail_subject TEXT NOT NULL DEFAULT '',
+    mail_text TEXT NOT NULL DEFAULT '',
+    mail_mode TEXT NOT NULL DEFAULT 'link',
+    mail_account TEXT NOT NULL DEFAULT '',
+    mail_error TEXT,
+    last_sent TEXT,
+    created_at TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT '',
+    last_done TEXT
+);
+CREATE TABLE routine_log (
+    id INTEGER PRIMARY KEY,
+    routine_id INTEGER NOT NULL REFERENCES routines(id) ON DELETE CASCADE,
+    at TEXT NOT NULL,
+    action TEXT NOT NULL,
+    day TEXT NOT NULL,
+    next_due TEXT NOT NULL
+);
+"""
+
+# Handoffs: a text that one session, or the person, leaves for another
+# session in the same project. A delivery row records which session has
+# already been shown a handoff, so that it is shown once.
+HANDOFFS_SCHEMA = """
+CREATE TABLE handoffs (
+    id INTEGER PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    machine_id INTEGER REFERENCES machines(id) ON DELETE SET NULL,
+    project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+    from_lane TEXT NOT NULL DEFAULT '',
+    to_lane TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL,
+    text TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open',
+    taken_at TEXT,
+    taken_by TEXT NOT NULL DEFAULT '',
+    done_at TEXT,
+    result TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX handoffs_project ON handoffs(project_id, status);
+CREATE TABLE handoff_deliveries (
+    handoff_id INTEGER NOT NULL REFERENCES handoffs(id) ON DELETE CASCADE,
+    session_id TEXT NOT NULL,
+    at TEXT NOT NULL,
+    PRIMARY KEY (handoff_id, session_id)
+);
+"""
+
+# Network adapters that a machine reports, and the one that wakes it.
+WAKE_SCHEMA = """
+ALTER TABLE machines ADD COLUMN adapters TEXT;
+ALTER TABLE machines ADD COLUMN wake_mac TEXT;
+"""
+
 MIGRATIONS = [SCHEMA, RULES_SCHEMA, WORK_DIRS_SCHEMA, AI_SWITCH_SCHEMA, HUB_RULES_SCHEMA,
               USAGE_SCHEMA, ORGANIZE_SCHEMA, PROPOSALS_SCHEMA, CONNECTOR_SCHEMA, PRIVATE_SCHEMA,
-              GOOGLE_SCHEMA]
+              GOOGLE_SCHEMA, LOCKS_SCHEMA, ROUTINES_SCHEMA, HANDOFFS_SCHEMA, WAKE_SCHEMA]
 
 
 def init(data_dir: Path) -> None:

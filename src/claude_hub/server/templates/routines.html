@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% set active = "routines" %}
+{% block title %}Routines · Claude hub{% endblock %}
+
+{% macro fields(r, units, senders) %}
+<div class="fields">
+  <label>Name <input type="text" name="name" value="{{ r.name if r else '' }}" required></label>
+  <label>Next due day <input type="text" name="next_due" value="{{ r.next_due if r else '' }}" placeholder="2026-11-03" required></label>
+  <label>Every <input type="text" name="every" value="{{ r.every if r else 6 }}" inputmode="numeric" required></label>
+  <label>Unit
+    <select name="unit">{% for unit in units %}<option value="{{ unit }}"{% if (r.unit if r else "months") == unit %} selected{% endif %}>{{ unit }}</option>{% endfor %}</select></label>
+  <label>The next time counts from
+    <select name="anchor">
+      <option value="done"{% if not r or r.anchor == "done" %} selected{% endif %}>the day it was done (appointment)</option>
+      <option value="due"{% if r and r.anchor == "due" %} selected{% endif %}>the due day (supply that runs out)</option>
+    </select></label>
+  <label>Remind this many days before <input type="text" name="lead_days" value="{{ r.lead_days if r else 14 }}" inputmode="numeric"></label>
+</div>
+<label class="wide">Note <textarea name="note" rows="2">{{ r.note if r else "" }}</textarea></label>
+<details class="tool"><summary>Prepared mail (optional)</summary>
+  <div class="fields">
+    <label>To <input type="text" name="mail_to" value="{{ r.mail_to if r else '' }}" placeholder="praxis@example.com"></label>
+    <label>Subject <input type="text" name="mail_subject" value="{{ r.mail_subject if r else '' }}"></label>
+  </div>
+  <textarea name="mail_text" rows="6" aria-label="Text of the mail">{{ r.mail_text if r else "" }}</textarea>
+  <div class="fields">
+    <label>Who sends it
+      <select name="mail_mode">
+        <option value="link"{% if not r or r.mail_mode == "link" %} selected{% endif %}>I do: a link opens it in my mail program</option>
+        <option value="send"{% if r and r.mail_mode == "send" %} selected{% endif %}>The hub, when I press Send</option>
+        <option value="auto"{% if r and r.mail_mode == "auto" %} selected{% endif %}>The hub, by itself, when the routine is due</option>
+      </select></label>
+    <label>The hub sends from
+      <select name="mail_account">
+        <option value="">(no account)</option>
+        {% for a in senders %}<option value="{{ a.label }}"{% if r and r.mail_account == a.label %} selected{% endif %}>{{ a.label }} · {{ a.email }}</option>{% endfor %}
+        {% if r and r.mail_account and r.mail_account not in (senders | map(attribute="label") | list) %}<option value="{{ r.mail_account }}" selected>{{ r.mail_account }} (may not send)</option>{% endif %}
+      </select></label>
+  </div>
+  <p class="hint">The hub sends only from a Google account for which you ticked the box for sending when you connected it, only to this one address, and once per round. By itself it sends between 8:00 and 19:00, from the first day of the lead time. After a failed attempt it waits for you.</p>
+</details>
+<label class="check"><input type="checkbox" name="enabled" value="1"{% if not r or r.enabled %} checked{% endif %}> Turned on</label>
+{% endmacro %}
+
+{% block main %}
+<h1>Routines</h1>
+<p class="lead">Things that come back on a schedule: a checkup, a yearly appointment, a new prescription. A routine shows here, on the Now page, and in the status feed from its lead time until you mark it as done. The feed carries only the number, never a name.</p>
+
+{% if hidden %}
+<p class="empty">{{ routines | length }} routine{{ "s" if routines | length != 1 else "" }}, {{ due | length }} due. Hidden while "Hide private projects" is on.</p>
+{% else %}
+
+<section>
+  <h2>Due <span class="count">{{ due | length }}</span></h2>
+  {% for r in due %}
+  <div class="box">
+    <div class="boxhead">
+      <strong>{{ r.name }}</strong>
+      <span><span class="pill {{ 'unpushed' if r.state == 'overdue' else 'waiting' }}">{% if r.state == "overdue" %}{{ -r.days_left }} day{{ "s" if r.days_left != -1 else "" }} overdue{% elif r.days_left == 0 %}due today{% else %}due in {{ r.days_left }} day{{ "s" if r.days_left != 1 else "" }}{% endif %}</span> <span class="sub">{{ r.next_due }}</span></span>
+    </div>
+    {% if r.note %}<div class="text">{{ r.note }}</div>{% endif %}
+    {% if r.mail_error %}<p class="notice">The mail was not sent: {{ r.mail_error }}</p>{% endif %}
+    {% if r.mailto %}
+    {% if r.mail_mode != "link" %}
+    <form method="post" action="/routines/{{ r.id }}/send" class="inline">
+      <button type="submit">Send the mail to {{ r.mail_to }} from {{ r.mail_account }}</button>
+      {% if r.mail_mode == "auto" and not r.mail_error %}<span class="sub">The hub sends it by itself at its next check between 8:00 and 19:00.</span>{% endif %}
+    </form>
+    {% endif %}
+    <p><a href="{{ r.mailto }}">Open the prepared mail to {{ r.mail_to }} in my mail program</a></p>
+    <details class="tool"><summary>{{ r.mail_subject or "(no subject)" }}</summary><pre>{{ r.mail_text }}</pre></details>
+    {% endif %}
+    <form method="post" action="/routines/{{ r.id }}/done" class="inline">
+      <label class="sub">Done on <input type="text" name="day" value="{{ today }}" size="10" aria-label="Day on which {{ r.name }} was done"></label>
+      <button type="submit">Done</button>
+      <button type="submit" class="quiet" formaction="/routines/{{ r.id }}/skip">Skip this time</button>
+    </form>
+    <p class="hint">Next time after "Done": {{ r.interval }} after {{ "that day" if r.anchor == "done" else "the due day" }}.</p>
+  </div>
+  {% else %}
+  <p class="empty">Nothing is due.</p>
+  {% endfor %}
+</section>
+
+<section>
+  <h2>All routines</h2>
+  {% for r in routines %}
+  <details class="box">
+    <summary>{{ r.name }} <span class="sub">every {{ r.interval }} · next {{ r.next_due }}{% if r.last_done %} · last done {{ r.last_done }}{% endif %}</span>
+      {% if r.state == "off" %}<span class="pill">off</span>{% elif r.state != "later" %}<span class="pill waiting">{{ r.state }}</span>{% endif %}
+      {% if r.mail_mode == "auto" %}<span class="pill running">sends by itself</span>{% elif r.mail_mode == "send" %}<span class="pill">sends on a press</span>{% endif %}
+      {% if r.source and r.source != "hub" %}<span class="pill">drafted by {{ r.source }}</span>{% endif %}</summary>
+    <form method="post" action="/routines/{{ r.id }}">
+      {{ fields(r, units, senders) }}
+      <div class="toolbar">
+        <button type="submit">Save</button>
+        <button type="submit" class="quiet" formaction="/routines/{{ r.id }}/delete" formnovalidate>Delete</button>
+      </div>
+    </form>
+  </details>
+  {% else %}
+  <p class="empty">No routines yet.</p>
+  {% endfor %}
+</section>
+
+<section>
+  <h2>Add a routine</h2>
+  <form method="post" action="/routines" class="box">
+    {{ fields(None, units, senders) }}
+    <div class="toolbar"><button type="submit">Add</button></div>
+  </form>
+  <p class="hint">A session can draft a routine through the connector. A draft is turned off until you turn it on here.</p>
+</section>
+
+{% if log %}
+<section>
+  <h2>History</h2>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Routine</th><th>What</th><th>Day</th><th>Next due</th></tr></thead>
+    <tbody>
+    {% for entry in log %}
+      <tr><td>{{ entry.name }}</td><td>{{ {"done": "done", "sent": "mail sent", "skip": "skipped"}[entry.action] }}</td><td>{{ entry.day }}</td><td>{{ entry.next_due }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endif %}
+{% endif %}
+{% endblock %}

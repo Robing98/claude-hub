@@ -43,6 +43,7 @@ class FakeGoogle:
         self.page_size = 0
         self.refuse: set[str] = set()
         self.created: list[dict] = []
+        self.outbox: list[bytes] = []
         self.emails = {"refresh-private": "robin@example.com", "refresh-work": "robin@work.example"}
         self.calendars = {
             "robin@example.com": [
@@ -129,6 +130,9 @@ class FakeGoogle:
             if path.rsplit("/", 1)[1] == "missing":
                 return 404, {"error": {"message": "Not Found"}}
             return 200, {"id": path.rsplit("/", 1)[1], "summary": "Changed", **payload}
+        if path.endswith("/users/me/messages/send"):
+            self.outbox.append(base64.urlsafe_b64decode(payload["raw"]))
+            return 200, {"id": "sent1", "threadId": "t9"}
         if path.endswith("/users/me/messages"):
             return 200, {"messages": [{"id": "m1"}] if "zahn" in query["q"][0].lower() else []}
         if "/users/me/messages/" in path:
@@ -477,8 +481,39 @@ def test_mail_search_and_read(client, two_accounts, data_dir: Path):
     assert mail["text"] == "Ihr Termin:\n6. Oktober, 9 Uhr" and mail["from"].startswith("Praxis")
     actions = [row["action"] for row in db.connect(data_dir).execute("SELECT action FROM google_log")]
     assert actions.count("mail searched") == 3 and actions.count("mail read") == 1
-    # The hub has no way to send mail.
+    # Reading mail sends nothing.
     assert not [call for call in two_accounts.calls if "send" in call[1]]
+
+
+def test_sending_needs_the_optional_permission(client, app, fake):
+    from email import message_from_bytes
+    from claude_hub.server.google import REQUIRED_SCOPES
+    # Without the box for sending, the account connects and cannot send.
+    assert connect(client, "work", scopes=REQUIRED_SCOPES).status_code == 200
+    assert connect(client, "private").status_code == 200
+    accounts = {a["label"]: a["can_send"] for a in client.get("/api/v1/google/accounts").json()["accounts"]}
+    assert accounts == {"private": True, "work": False}
+    google: Google = app.state.google
+    with pytest.raises(GoogleError, match="may not send mail") as refused:
+        google.send_mail("work", "praxis@example.com", "Folgerezept", "Guten Tag")
+    assert refused.value.status == 403 and fake.outbox == []
+
+    sent = google.send_mail("private", "praxis@example.com", " Folgerezept\n", "Guten Tag,\nbitte ein Rezept für Ä.")
+    assert sent["id"] == "sent1" and sent["from"] == "robin@example.com"
+    mail = message_from_bytes(fake.outbox[0])
+    assert mail["To"] == "praxis@example.com" and mail["From"] == "robin@example.com"
+    assert mail["Subject"] == "Folgerezept"
+    assert mail.get_payload(decode=True).decode() == "Guten Tag,\nbitte ein Rezept für Ä.\n"
+    for to, subject, text in (("a@b.de, c@d.de", "s", "t"), ("praxis", "s", "t"),
+                              ("a@b.de", "", "t"), ("a@b.de", "s", " ")):
+        with pytest.raises(GoogleError) as bad:
+            google.send_mail("private", to, subject, text)
+        assert bad.value.status == 400
+    assert len(fake.outbox) == 1
+    page = client.get("/settings/google").text
+    assert "May send mail" in page and "Send email on your behalf" in page
+    # No endpoint for sessions sends mail.
+    assert client.post("/api/v1/google/mail", json={"to": "a@b.de"}).status_code == 405
 
 
 # --- connector tools ---------------------------------------------------------------------
@@ -638,7 +673,7 @@ def test_sign_in_failures(cfg, app, tmp_path: Path, monkeypatch):
     with pytest.raises(google_auth.SignInError, match="in time"):
         sign_in(cfg, tmp_path, monkeypatch, lambda url: None, None, wait_seconds=0)
     # Fewer permissions than the hub needs: the hub says what is missing.
-    with pytest.raises(google_auth.SignInError, match="tick every"):
+    with pytest.raises(google_auth.SignInError, match="tick the boxes"):
         sign_in(cfg, tmp_path, monkeypatch, answer("ok"), lambda url, fields: (
             200, {"refresh_token": "refresh-private", "scope": SCOPES[0]}))
     assert app.state.google.store.labels() == []

@@ -5,6 +5,8 @@
 {% block main %}
 <h1>Now</h1>
 <p class="lead">Sessions from the last {{ recent_days }} days and in-flight work that needs a decision.</p>
+{% if nav.routine_count %}<p class="notice"><a href="/routines">{{ nav.routine_count }} routine{{ "s" if nav.routine_count != 1 else "" }} {{ "is" if nav.routine_count == 1 else "are" }} due.</a></p>{% endif %}
+{% if nav.lock_count %}<p class="notice"><a href="/worktrees#locks">{{ nav.lock_count }} Git lock file{{ "s" if nav.lock_count != 1 else "" }} block{{ "s" if nav.lock_count == 1 else "" }} a repository.</a></p>{% endif %}
 {% if nav.proposal_count %}<p class="notice"><a href="/proposals">{{ nav.proposal_count }} rule proposal{{ "s" if nav.proposal_count != 1 else "" }} wait{{ "s" if nav.proposal_count == 1 else "" }} for your decision.</a></p>{% endif %}
 
 <section>

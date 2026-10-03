@@ -28,6 +28,9 @@ if /i "%CMD%"=="rules-export" goto rules_export
 if /i "%CMD%"=="rules-pull" goto rules_pull
 if /i "%CMD%"=="mcp-install" goto mcp_install
 if /i "%CMD%"=="mcp-remove" goto mcp_remove
+if /i "%CMD%"=="unlock" goto unlock
+if /i "%CMD%"=="wake" goto wake
+if /i "%CMD%"=="handoffs" goto handoffs
 if /i "%CMD%"=="google-add" goto google_add
 if /i "%CMD%"=="google-list" goto google_list
 if /i "%CMD%"=="google-remove" goto google_remove
@@ -62,6 +65,9 @@ echo   rules-export [DIR]  Write the rules of a project into its folder, hidden 
 echo   rules-pull     Bring rule sets that were changed in the hub into this repository
 echo   hooks-install  Make Claude Code sessions fetch their rules from the hub
 echo   hooks-remove   Undo hooks-install
+echo   wake NAME      Let the hub wake a machine over the network
+echo   handoffs       Show the handoffs of the project of this folder
+echo   unlock [DIR] [--force]  Remove Git lock files that were left behind
 echo   mcp-install    Give Cowork the hub tools through the Claude desktop app
 echo   mcp-remove     Undo mcp-install
 echo   google-add LABEL [--client FILE]  Sign a Google account in for the hub
@@ -131,6 +137,22 @@ goto end
 
 :mcp_remove
 "%PY%" -m claude_hub.collector.cli mcp install --remove
+goto end
+
+:wake
+if "%~1"=="" (
+  echo Usage: hub wake MACHINE
+  goto end
+)
+"%PY%" -m claude_hub.collector.cli wake %1
+goto end
+
+:handoffs
+"%PY%" -m claude_hub.collector.cli handoff list --all
+goto end
+
+:unlock
+"%PY%" -m claude_hub.collector.cli unlock %1 %2
 goto end
 
 :google_add

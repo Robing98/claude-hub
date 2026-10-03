@@ -31,4 +31,32 @@
 </table>
 </div>
 <p class="hint">Merged means the branch is contained in the default branch. Squash merges are not detected yet.</p>
+
+<section id="locks">
+  <h2>Git locks</h2>
+  <p class="hint">A Git command that was killed, or that ran where files cannot be deleted, leaves a lock file behind. Every later Git command in that repository then fails. The collector removes such a file once it is five minutes old. To remove it at once, run <code>hub unlock</code> on that machine.</p>
+  {% if locks.stuck %}
+  <p class="notice">{{ locks.stuck | length }} lock file{{ "s" if locks.stuck | length != 1 else "" }} could not be removed.</p>
+  {% endif %}
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>State</th><th>Repository</th><th>Lock</th><th>Locked</th><th>Machine</th></tr></thead>
+    <tbody>
+    {% for lock in locks.stuck + locks.removed %}
+      <tr>
+        <td><span class="pill {{ 'merged' if lock.state == 'removed' else 'unpushed' }}">{{ "still there" if lock.state != "removed" else "removed" }}</span>
+          {%- if lock.state == "in use" %}<div class="sub">A Git process runs on that machine. If you are sure that none uses this repository: <code>hub unlock --force</code></div>{% endif %}
+          {%- if lock.note %}<div class="sub">{{ lock.note }}</div>{% endif %}</td>
+        <td class="mono">{{ lock.repo }}</td>
+        <td class="mono">{{ lock.inside or lock.path }}{% if not lock.size %}<div class="sub">empty</div>{% endif %}</td>
+        <td class="nowrap" title="{{ lock.first_seen }}">{{ lock.first_seen | reltime }}</td>
+        <td>{{ lock.machine }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="empty">No lock files were left behind in the last 30 days.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
 {% endblock %}

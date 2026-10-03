@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% set active = "handoffs" %}
+{% block title %}Handoffs · Claude hub{% endblock %}
+{% block main %}
+<h1>Handoffs</h1>
+<p class="lead">A text that one session leaves for another session in the same project, or that you leave for a session. A Claude Code session receives an open handoff with its next prompt. A Cowork chat reads it with the connector tools. Nobody copies text between two apps by hand.</p>
+
+<p class="filters" role="navigation" aria-label="Which handoffs">
+  <a href="/handoffs"{% if show != "all" %} class="on" aria-current="page"{% endif %}>Open and taken</a>
+  <a href="/handoffs?show=all"{% if show == "all" %} class="on" aria-current="page"{% endif %}>All</a>
+</p>
+
+<section>
+  {% for h in handoffs %}
+  <details class="box"{% if h.status == "open" %} open{% endif %}>
+    <summary>#{{ h.id }} {{ h.title }}
+      <span class="pill {{ 'waiting' if h.status == 'open' else 'running' if h.status == 'taken' else 'merged' }}">{{ h.status }}</span>
+      <span class="sub"><a href="/projects/{{ h.project_id }}">{{ h.project_name }}</a> · from {{ h.from_lane or "a session" }}{% if h.to_lane %} to {{ h.to_lane }}{% endif %}{% if h.machine %} · {{ h.machine }}{% endif %} · <span title="{{ h.created_at }}">{{ h.created_at | reltime }}</span>{% if h.taken_by %} · taken by {{ h.taken_by }}{% endif %}</span></summary>
+    <div class="text">{{ h.text }}</div>
+    {% if h.result %}<p class="hint">Result: {{ h.result }}</p>{% endif %}
+    <form method="post" class="toolbar">
+      {% if h.status != "done" %}<button type="submit" class="quiet" formaction="/handoffs/{{ h.id }}/done">Mark as done</button>{% endif %}
+      {% if h.status != "open" %}<button type="submit" class="quiet" formaction="/handoffs/{{ h.id }}/reopen">Open again</button>{% endif %}
+      <button type="submit" class="quiet" formaction="/handoffs/{{ h.id }}/delete">Delete</button>
+    </form>
+  </details>
+  {% else %}
+  <p class="empty">No handoffs{{ "" if show == "all" else " are open" }}.</p>
+  {% endfor %}
+</section>
+
+<section>
+  <h2>Leave a text for a session</h2>
+  <form method="post" action="/handoffs" class="box">
+    <div class="fields">
+      <label>Project
+        <select name="project" required>
+          {% for p in projects %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}
+        </select></label>
+      <label>For the lane (optional) <input type="text" name="to_lane" placeholder="code"></label>
+      <label>Title <input type="text" name="title" required></label>
+    </div>
+    <textarea name="text" rows="8" aria-label="Text of the handoff" required></textarea>
+    <div class="toolbar"><button type="submit">Leave it</button></div>
+  </form>
+  <p class="hint">A lane is a free name for a line of work in a project, for example "design" or "code". Without a lane, the next session in the project that receives the handoff decides whether it is meant.</p>
+</section>
+{% endblock %}

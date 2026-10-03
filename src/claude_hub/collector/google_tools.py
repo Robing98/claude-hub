@@ -105,7 +105,7 @@ TOOLS = [
         "title": "Search mail",
         "description": "Search the mail of one account or of all, with the search syntax of Gmail, "
                        "for example 'from:praxis newer_than:1y'. Returns sender, subject, date, "
-                       "and a short excerpt. The hub cannot send mail.",
+                       "and a short excerpt. No tool sends mail.",
         "inputSchema": {"type": "object",
                         "properties": {"query": {"type": "string"}, "account": ACCOUNT,
                                        "limit": {"type": "integer", "minimum": 1, "maximum": 25}},

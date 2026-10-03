@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from . import db
-from .google import SCOPES, Google, GoogleError, event_body, valid_label
+from .google import REQUIRED_SCOPES, SCOPES, Google, GoogleError, event_body, valid_label
 from .ingest import current_machine, get_conn
 
 router = APIRouter(prefix="/api/v1/google")
@@ -85,10 +85,10 @@ def put_account(label: str, body: AccountBody, request: Request,
                 conn: sqlite3.Connection = Depends(get_conn)) -> dict[str, Any]:
     if not valid_label(label):
         raise HTTPException(400, "A label has lower-case letters, digits, and hyphens, up to 30 characters.")
-    missing = [scope for scope in SCOPES if scope not in body.scopes]
+    missing = [scope for scope in REQUIRED_SCOPES if scope not in body.scopes]
     if missing:
-        raise HTTPException(400, "The sign-in lacks permissions. In the Google window, tick every "
-                                 f"box. Missing: {', '.join(missing)}")
+        raise HTTPException(400, "The sign-in lacks permissions. In the Google window, tick the "
+                                 f"boxes for the calendar and for reading mail. Missing: {', '.join(missing)}")
     account = service(request).connect(label, body.client_id, body.client_secret,
                                        body.refresh_token, body.scopes, db.now_iso())
     log(conn, machine["id"], label, "account connected", str(account.get("email") or ""))

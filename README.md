@@ -114,6 +114,9 @@ The collector also uploads the Cowork sessions that ran on the computer. The Cla
 | `hub rules-export [DIR]` | Write the rules of a project into its folder, hidden from Git |
 | `hub rules-pull` | Bring rule sets that were changed in the hub into `rulesets/` |
 | `hub mcp-install` | Give Cowork the hub tools through the Claude desktop app |
+| `hub handoffs` | Show the handoffs of the project of this folder |
+| `hub wake NAME` | Let the hub wake the machine `NAME` over the network |
+| `hub unlock [DIR]` | Remove Git lock files that were left behind |
 | `hub google-add LABEL` | Sign a Google account in for the hub, in the browser |
 | `hub google-list` | Show the Google accounts of the hub |
 
@@ -195,7 +198,7 @@ The Google connection of a Claude app holds one Google account. The hub holds as
 - The **Calendar** page lists the events of every account in order of time, and the events that sessions propose.
 - Sessions use the connector tools: `calendar_list`, `calendar_agenda`, `calendar_propose_event`, `calendar_create_event`, `calendar_update_event`, `mail_search`, and `mail_read`.
 - A proposed event reaches a calendar only when you accept it on the **Calendar** page. You can change it first. A session writes an event at once only when you confirmed that event in the chat.
-- The hub creates and changes events. It deletes none. It reads mail and sends none.
+- The hub creates and changes events. It deletes none. It reads mail. It sends mail only for a routine that you set to send. No session and no connector tool can send mail.
 - **Settings** > **Google accounts** holds the setup steps, the state of each account, and the last activity.
 
 To connect an account:
@@ -221,6 +224,52 @@ The sign-ins are in `google.json` in the data folder, readable by the service us
 
 Squash merges are not detected yet, because that needs the pull request state from the Git host.
 
+## Handoffs
+
+A handoff is a text that one session leaves for another session of the same project, or that you leave for a session. Example: the design lane of a project runs in Cowork and writes a brief. The code lane runs in Claude Code and receives the brief with its next prompt. Nobody copies text between two apps.
+
+- A lane is a free name for a line of work in a project, such as `design` or `code`. A handoff can name the lane it is meant for.
+- Claude Code: a hook delivers open handoffs of the project with the next prompt, once per session. Run `hub hooks-install` again after this update, because the hook is new. The session takes a handoff with `handoff show ID --take` and finishes it with `handoff done ID "RESULT"`. It sends one with `handoff send "TITLE" --file FILE --to LANE`.
+- Cowork: the connector tools `handoff_send`, `handoff_list`, `handoff_take`, and `handoff_done`. `hub_rules` also lists what waits in the project.
+- You: the **Handoffs** page shows every handoff and has a form to leave one.
+- A handoff is `open`, then `taken` by one session, then `done`. A second session that tries to take it is told that it came too late.
+- The prompt hook asks the hub before every prompt. It waits at most three seconds. If the hub does not answer, it stops asking for five minutes.
+
+## Routines
+
+A routine is something that comes back on a schedule: a checkup every six months, an appointment once a year, a new prescription every twelve weeks.
+
+- A routine has a next due day and a lead time. From the lead time on, it shows on the **Routines** page, on **Now**, and in the status feed as `routines_due`. The feed carries only the number, never a name.
+- **Done** sets the next due day. For an appointment, the interval counts from the day it was done. For a supply that runs out, it counts from the due day, no matter when you acted.
+- A routine can carry a prepared mail. Who sends it is a choice per routine, which only you make on the page:
+  - You do: the page offers a link that opens the mail in your mail program. This is the default.
+  - The hub, when you press **Send**.
+  - The hub, by itself, from the first day of the lead time.
+- The hub sends only from a Google account where you ticked **Send email on your behalf** at sign-in, only to the one address of the routine, and once per round. By itself it sends between 8:00 and 19:00. After a failed attempt it waits for you. **Settings** > **Google accounts** lists every sent mail.
+- A session can draft a routine with the connector tool `routine_draft`. A draft is turned off and never sends, until you change it.
+- The **Routines** page shows no names while "Hide private projects" is on.
+
+## Wake a computer
+
+The hub server is always on, so it can wake a computer that sleeps or is shut down (Wake-on-LAN).
+
+- The collector reports the network adapters of its machine. **Settings** > **Devices** shows them, picks the one connected cable adapter by default, and has a **Wake** button.
+- From another machine: `hub wake NAME`. From a session: the connector tool `machine_wake`.
+- The computer must allow waking in its firmware and in Windows. The **Devices** page lists the steps.
+- The signal reaches only computers in the same network as the hub server.
+
+## Git locks
+
+Git creates `index.lock` while it writes and removes it when it is done. A Git command that is killed, or that runs where files cannot be deleted, leaves the file behind. Every later Git command in that repository then fails with "index.lock: File exists". The shell that Cowork uses on your computer is such a place.
+
+- Each collector run looks for lock files in every repository and worktree that it knows. It removes a lock that is older than five minutes, if the lock is empty or no Git process runs on the machine.
+- To remove stale locks at once, run `hub unlock`, or `hub unlock DIR` for one repository. The limit is 15 seconds there. Add `--force` to remove a lock with content while a Git process runs.
+- A Cowork chat removes its own leftovers with the connector tool `hub_unlock`.
+- The **Worktrees** page lists the locks of the last 30 days, per repository and machine. A lock that could not be removed shows on the **Now** page and in the status feed as `stuck_locks`.
+- To only report locks, set `clean_locks = false` in the collector configuration. `lock_stale_minutes` sets the age limit.
+
+The collector itself never takes a Git lock: it runs Git with `GIT_OPTIONAL_LOCKS=0`.
+
 ## Session states
 
 | State | Meaning |
@@ -236,6 +285,8 @@ Squash merges are not detected yet, because that needs the pull request state fr
 - Each collector token identifies one machine. The server stores only a hash of it.
 - The web view has no sign-in unless `HUB_UI_PASSWORD` is set. It refuses forms that another website sends, and nothing more. Do not expose the server to the internet.
 - The data folder holds the sign-ins of the Google accounts. Whoever reads `google.json` can read that mail and write to those calendars. Keep backups of the data folder as safe as the server.
+- Everyone who reaches the web view can set up a routine that sends mail from an account that may send. If other people share the network, set `HUB_UI_PASSWORD`, or leave the box for sending unticked.
+- A handoff is an instruction to a session. Every machine with a token can file one, and so can everyone who reaches the web view.
 - The API for Google needs the token of a machine. A session on any machine with a token can read the mail of every connected account.
 - Back up the `hub-data` volume. After Claude Code deletes old transcripts (30 days by default), the server holds the only copy.
 

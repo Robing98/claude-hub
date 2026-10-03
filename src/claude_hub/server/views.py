@@ -20,7 +20,8 @@ from ..rules import FILE_NAMED_KINDS
 from ..rulesets import applies, build_briefing, parse_ruleset, split_file, valid_name, with_addition, with_body
 from ..transcript import iter_turns
 from . import projects as project_rules
-from . import store, usage
+from . import handoffs, routines, store, usage
+from .google import local_today
 from .db import now_iso as now_stamp
 from .ingest import current_rulesets, get_conn, project_view
 from .pricing import load_prices
@@ -242,6 +243,31 @@ def parse_target(conn: sqlite3.Connection, target: str) -> tuple[int | None, int
     return workspace_id, class_id
 
 
+# A lock file that is still there and that the collector did not remove.
+STUCK_LOCK_STATES = ("in use", "kept", "failed")
+
+
+def stuck_locks(conn: sqlite3.Connection) -> int:
+    return conn.execute(
+        f"SELECT COUNT(*) FROM git_locks WHERE state IN ({', '.join('?' * len(STUCK_LOCK_STATES))})",
+        STUCK_LOCK_STATES).fetchone()[0]
+
+
+def load_locks(conn: sqlite3.Connection, hide: bool) -> dict[str, list[dict[str, Any]]]:
+    rows = [dict(row) for row in conn.execute(
+        """SELECT g.*, m.name AS machine FROM git_locks g JOIN machines m ON m.id = g.machine_id
+           WHERE g.state NOT IN ('young', 'gone') ORDER BY g.last_seen DESC LIMIT 60""").fetchall()]
+    for row in rows:
+        if hide:
+            row["path"] = row["repo"] = HIDDEN
+        else:
+            # The part after the repository says which worktree and which lock.
+            row["inside"] = row["path"][len(row["repo"]):].lstrip("\\/") \
+                if row["path"].startswith(row["repo"]) else row["path"]
+    return {"stuck": [row for row in rows if row["state"] in STUCK_LOCK_STATES],
+            "removed": [row for row in rows if row["state"] == "removed"][:20]}
+
+
 def nav(conn: sqlite3.Connection, request: Request) -> dict[str, Any]:
     inbox = conn.execute(
         "SELECT COUNT(*) FROM projects WHERE workspace_id IS NULL AND archived = 0").fetchone()[0]
@@ -250,8 +276,11 @@ def nav(conn: sqlite3.Connection, request: Request) -> dict[str, Any]:
     private = conn.execute("SELECT COUNT(*) FROM projects WHERE private = 1").fetchone()[0]
     events = conn.execute(
         "SELECT COUNT(*) FROM event_proposals WHERE status = 'pending'").fetchone()[0]
+    today = local_today(request.app.state.google.time_zone)
     return {"inbox_count": inbox, "proposal_count": proposals, "private_count": private,
-            "event_count": events, "hiding": hiding(request)}
+            "event_count": events, "lock_count": stuck_locks(conn),
+            "routine_count": routines.due_count(conn, today),
+            "handoff_count": handoffs.open_count(conn), "hiding": hiding(request)}
 
 
 def render(request: Request, conn: sqlite3.Connection, name: str, **context: Any):
@@ -328,11 +357,24 @@ def status_json(request: Request, conn: sqlite3.Connection = Depends(get_conn)) 
     if events:
         headline = ", ".join(part for part in (
             headline, f"{events} proposed event{'s' if events != 1 else ''}") if part)
+    locks = stuck_locks(conn)
+    if locks:
+        headline = ", ".join(part for part in (
+            headline, f"{locks} stuck Git lock{'s' if locks != 1 else ''}") if part)
+    # Only the number: the name of a routine can be private, and the feed
+    # goes to a phone lock screen.
+    due = routines.due_count(conn, local_today(request.app.state.google.time_zone))
+    if due:
+        headline = ", ".join(part for part in (
+            headline, f"{due} routine{'s' if due != 1 else ''} due") if part)
     return {
         **{name: len(items) for name, items in groups.items()},
         "active": len(listed),
         "proposals": proposals,
         "event_proposals": events,
+        "stuck_locks": locks,
+        "routines_due": due,
+        "open_handoffs": handoffs.open_count(conn),
         "headline": headline or "Nothing open",
         "detail": detail,
         "sessions": [{"status": s["status"], "project": s["project_name"], "title": s["title"],
@@ -481,7 +523,8 @@ def worktrees_page(request: Request, state: str = "", conn: sqlite3.Connection =
     counts = Counter(wt["state"] for wt in items)
     if state:
         items = [wt for wt in items if wt["state"] == state]
-    return render(request, conn, "worktrees.html", worktrees=items, counts=counts, state=state)
+    return render(request, conn, "worktrees.html", worktrees=items, counts=counts, state=state,
+                  locks=load_locks(conn, hiding(request)))
 
 
 @router.get("/settings")

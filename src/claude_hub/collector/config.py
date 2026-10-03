@@ -26,6 +26,12 @@ token = "PASTE_TOKEN_HERE"
 scan_roots = []
 scan_depth = 4
 
+# A Git command that was killed leaves a lock file behind, and every later Git
+# command in that repository fails. Each run removes such files once they are
+# older than lock_stale_minutes. Set clean_locks = false to only report them.
+# clean_locks = true
+# lock_stale_minutes = 5
+
 # Cowork sessions that ran on this computer are collected as well, under the
 # account label "cowork". The Claude desktop app keeps their transcripts in its
 # own data folder. Set cowork = false to leave them out, or set cowork_dir when
@@ -62,6 +68,9 @@ class Config:
     scan_roots: list[Path] = field(default_factory=list)
     scan_depth: int = 4
     chunk_bytes: int = 4 * 1024 * 1024
+    # Remove Git lock files that were left behind, once they are this old.
+    clean_locks: bool = True
+    lock_stale_minutes: float = 5
 
 
 class ConfigError(Exception):
@@ -142,4 +151,6 @@ def load(path: Path) -> Config:
         scan_roots=[Path(str(root)).expanduser() for root in raw.get("scan_roots", [])],
         scan_depth=int(raw.get("scan_depth", 4)),
         chunk_bytes=int(raw.get("chunk_bytes", 4 * 1024 * 1024)),
+        clean_locks=bool(raw.get("clean_locks", True)),
+        lock_stale_minutes=float(raw.get("lock_stale_minutes", 5)),
     )

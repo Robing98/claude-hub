@@ -186,3 +186,6 @@ button.pressed { color: var(--amber); border-color: currentColor; background: va
 .fields input[type=text] { width: 100%; }
 .agenda-time { width: 8rem; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .agenda-source { width: 22rem; color: var(--muted); font-size: .85rem; }
+label.wide { display: grid; gap: .15rem; font-size: .8rem; color: var(--muted); margin: .5rem 0; max-width: 60rem; }
+label.wide textarea { font-family: inherit; font-size: .9rem; }
+details.box summary .pill, details.box summary .sub { margin-left: .5rem; font-weight: 400; }

@@ -12,6 +12,7 @@
   <nav aria-label="Main">
     {% set pages = [("now", "/", "Now"), ("overview", "/overview", "Overview"), ("inbox", "/inbox", "Inbox"),
                     ("worktrees", "/worktrees", "Worktrees"), ("sessions", "/sessions", "Sessions"),
+                    ("handoffs", "/handoffs", "Handoffs"), ("routines", "/routines", "Routines"),
                     ("rules", "/rulesets", "Rules"), ("calendar", "/calendar", "Calendar"),
                     ("usage", "/usage", "Usage"),
                     ("settings", "/settings", "Settings")] %}
@@ -19,6 +20,9 @@
       <a href="{{ href }}"{% if active == key %} class="on" aria-current="page"{% endif %}>{{ label }}
         {%- if key == "inbox" and nav.inbox_count %} <span class="count">{{ nav.inbox_count }}</span>{% endif %}
         {%- if key == "rules" and nav.proposal_count %} <span class="count">{{ nav.proposal_count }}</span>{% endif %}
+        {%- if key == "worktrees" and nav.lock_count %} <span class="count">{{ nav.lock_count }}</span>{% endif %}
+        {%- if key == "handoffs" and nav.handoff_count %} <span class="count">{{ nav.handoff_count }}</span>{% endif %}
+        {%- if key == "routines" and nav.routine_count %} <span class="count">{{ nav.routine_count }}</span>{% endif %}
         {%- if key == "calendar" and nav.event_count %} <span class="count">{{ nav.event_count }}</span>{% endif %}</a>
     {% endfor %}
   </nav>

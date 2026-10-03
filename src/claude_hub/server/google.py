@@ -21,6 +21,7 @@ import time
 import urllib.error
 import urllib.request
 from datetime import date, datetime, timedelta, timezone
+from email.message import EmailMessage
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import quote, urlencode
@@ -29,14 +30,22 @@ TOKEN_URL = "https://oauth2.googleapis.com/token"
 CALENDAR_API = "https://www.googleapis.com/calendar/v3"
 GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me"
 
-# Calendar: read and write events. Gmail: read only. The hub sends no mail.
-SCOPES = [
+# Calendar: read and write events. Gmail: read, and optionally send.
+# Sending is used only by routines that the person set up in the hub, and only
+# for an account where the person ticked the box for it. No session can send mail.
+SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
+# Without these, an account is not connected.
+REQUIRED_SCOPES = [
     "https://www.googleapis.com/auth/calendar",
     "https://www.googleapis.com/auth/gmail.readonly",
 ]
+# What the sign-in asks for. The person can leave the box for sending unticked.
+SCOPES = [*REQUIRED_SCOPES, SEND_SCOPE]
 
 STORE_FILE = "google.json"
 LABEL = re.compile(r"[a-z0-9][a-z0-9-]{0,29}")
+# One plain address. A routine sends to exactly one recipient.
+ADDRESS = re.compile(r"[^@\s,;<>]+@[^@\s,;<>]+\.[^@\s,;<>]+")
 DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 DEFAULT_TIME_ZONE = "Europe/Berlin"
 # How much of a mail or of an event description an answer carries.
@@ -150,6 +159,7 @@ class Store:
     def public(self) -> list[dict[str, Any]]:
         """What pages and API answers may show: no secret."""
         return [{"label": label, "email": entry.get("email"), "scopes": entry.get("scopes") or [],
+                 "can_send": SEND_SCOPE in (entry.get("scopes") or []),
                  "added_at": entry.get("added_at"), "last_error": entry.get("last_error")}
                 for label, entry in sorted(self._read().items())]
 
@@ -528,6 +538,28 @@ class Google:
         text = mail_text((message or {}).get("payload") or {})
         return {**self._mail_head(message), "text": text[:BODY_LIMIT],
                 "truncated": len(text) > BODY_LIMIT}
+
+    def send_mail(self, label: str, to: str, subject: str, text: str) -> dict[str, Any]:
+        """Send a plain-text mail from the account, to one recipient. Only routines call this."""
+        entry = self._entry(label)
+        if SEND_SCOPE not in (entry.get("scopes") or []):
+            raise GoogleError(403, f"The account '{label}' may not send mail. Connect it again and "
+                                   f"tick the box for sending: hub google-add {label}")
+        to, subject = (to or "").strip(), " ".join((subject or "").split())
+        if not ADDRESS.fullmatch(to):
+            raise GoogleError(400, f"Not one mail address: {to!r}")
+        if not subject or not (text or "").strip():
+            raise GoogleError(400, "A mail needs a subject and a text.")
+        message = EmailMessage()
+        message["To"] = to
+        if entry.get("email"):
+            message["From"] = entry["email"]
+        message["Subject"] = subject
+        message.set_content(text)
+        raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+        sent = self.call(label, "POST", f"{GMAIL_API}/messages/send", body={"raw": raw})
+        return {"id": (sent or {}).get("id"), "thread": (sent or {}).get("threadId"),
+                "account": label, "from": entry.get("email"), "to": to, "subject": subject}
 
     @staticmethod
     def _mail_head(message: dict[str, Any]) -> dict[str, Any]:

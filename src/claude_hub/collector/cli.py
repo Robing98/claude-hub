@@ -10,11 +10,12 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote
 
-from . import briefing, export, google_auth, mcp_server
+from . import briefing, export, google_auth, handoff, locks, mcp_server, netinfo
 from . import config as config_module
 from .client import Client, HubError
-from .gitscan import build_inventory, resolve_dir
+from .gitscan import build_inventory, find_repos, resolve_dir
 from .rulescan import scan_repo, scan_user
 from .sessions import find_transcripts, sync_account
 
@@ -60,7 +61,12 @@ def probe(folders: list[str], cache_dir: Path | None, repos_seen: set[str]) -> N
 def run_once(cfg: config_module.Config, sessions: bool = True, inventory: bool = True,
              rules: bool = True, cache_dir: Path | None = None) -> None:
     client = Client(cfg.server_url, cfg.token)
-    _, hello = client.request("POST", "/api/v1/hello", {"platform": platform.system().lower()})
+    greeting: dict = {"platform": platform.system().lower()}
+    adapters = netinfo.adapters()
+    if adapters is not None:
+        # The hub wakes this machine through one of its network adapters.
+        greeting["adapters"] = adapters
+    _, hello = client.request("POST", "/api/v1/hello", greeting)
     repos_seen: set[str] = set()
 
     if sessions:
@@ -89,6 +95,14 @@ def run_once(cfg: config_module.Config, sessions: bool = True, inventory: bool =
         _, answer = client.request("PUT", "/api/v1/inventory",
                                    {"platform": platform.system().lower(), "repos": repos})
         log(f"inventory: {answer['repos']} repositories, {answer['worktrees']} worktrees")
+
+        found = locks.sweep([repo["path"] for repo in repos], cfg.lock_stale_minutes * 60,
+                            remove=cfg.clean_locks)
+        for entry in found:
+            if entry["state"] != "young":
+                log(f"git lock: {locks.describe(entry)}")
+        # A hub that is older than this collector has no place for the report.
+        client.request("PUT", "/api/v1/locks", {"locks": found}, accept=(404,))
 
         if rules:
             sources = [
@@ -200,6 +214,76 @@ def cmd_hook(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_hook_prompt(args: argparse.Namespace) -> int:
+    """Print handoffs that wait for this session. Never fails, and never takes long."""
+    try:
+        if sys.stdin.isatty():
+            return 0
+        # Claude Code writes UTF-8. A Windows console would read it with a
+        # legacy code page, and some characters of a prompt cannot be read that way.
+        raw = getattr(sys.stdin, "buffer", None)
+        text = raw.read().decode("utf-8", "replace") if raw is not None else sys.stdin.read()
+        event = json.loads(text or "{}")
+        session_id, cwd = event.get("session_id"), event.get("cwd") or os.getcwd()
+        if not session_id:
+            return 0
+        cfg = config_module.load(args.config)
+        items = handoff.new_for_prompt(cfg, _cache_dir(args), cwd, str(session_id))
+        text = handoff.render_new(items, briefing.rules_command(_custom_config(args)))
+        if text:
+            briefing.emit(text)
+    except Exception:  # noqa: BLE001 - a broken hook must not block the prompt
+        pass
+    return 0
+
+
+def _say(result: tuple[bool, str]) -> int:
+    ok, message = result
+    briefing.emit(message + "\n") if ok else print(message, file=sys.stderr)
+    return 0 if ok else 1
+
+
+def cmd_handoff_send(args: argparse.Namespace) -> int:
+    cfg = config_module.load(args.config)
+    if args.file:
+        text = Path(args.file).read_text(encoding="utf-8")
+    elif args.text:
+        text = args.text
+    elif not sys.stdin.isatty():
+        text = sys.stdin.read()
+    else:
+        print("Give the text, a file with --file, or pipe the text in.", file=sys.stderr)
+        return 1
+    return _say(handoff.send(cfg, os.getcwd(), args.title, text, args.to or "", args.sender or ""))
+
+
+def cmd_handoff_list(args: argparse.Namespace) -> int:
+    cfg = config_module.load(args.config)
+    return _say(handoff.listing(cfg, os.getcwd(), "all" if args.all else "open"))
+
+
+def cmd_handoff_show(args: argparse.Namespace) -> int:
+    cfg = config_module.load(args.config)
+    return _say(handoff.show(cfg, args.id, take=args.take, by=args.by or ""))
+
+
+def cmd_handoff_done(args: argparse.Namespace) -> int:
+    cfg = config_module.load(args.config)
+    return _say(handoff.done(cfg, args.id, args.result or ""))
+
+
+def cmd_wake(args: argparse.Namespace) -> int:
+    cfg = config_module.load(args.config)
+    try:
+        _, answer = Client(cfg.server_url, cfg.token, timeout=30).request(
+            "POST", f"/api/v1/machines/{quote(args.machine, safe='')}/wake")
+    except HubError as exc:
+        print(f"Failed: {handoff.reason(exc)}", file=sys.stderr)
+        return 1
+    print(f"The wake signal for {answer['machine']} is sent to {answer['mac']}.")
+    return 0
+
+
 def cmd_rules_show(args: argparse.Namespace) -> int:
     cfg = config_module.load(args.config)
     text, state = briefing.fetch_ruleset(cfg, _cache_dir(args), args.name)
@@ -271,6 +355,7 @@ def cmd_rules_pull(args: argparse.Namespace) -> int:
 
 def cmd_mcp(args: argparse.Namespace) -> int:
     cfg = config_module.load(args.config)
+    mcp_server.CONFIG_PATH = _custom_config(args)
     mcp_server.serve(cfg, _cache_dir(args))
     return 0
 
@@ -279,6 +364,28 @@ def cmd_mcp_install(args: argparse.Namespace) -> int:
     path = args.desktop_config or mcp_server.desktop_config_path()
     print(mcp_server.install(path, _custom_config(args), remove=args.remove))
     return 0
+
+
+def cmd_unlock(args: argparse.Namespace) -> int:
+    """Remove stale Git lock files now, in one repository or in all known ones."""
+    if args.folder:
+        info = resolve_dir(str(Path(args.folder).resolve()))
+        root = info["main_repo"] or info["repo_root"]
+        if not root:
+            print(f"{args.folder} is not inside a Git repository.", file=sys.stderr)
+            return 1
+        repos = [root]
+    else:
+        cfg = config_module.load(args.config)
+        here = resolve_dir(os.getcwd())
+        repos = sorted({str(repo) for repo in find_repos(cfg.scan_roots, cfg.scan_depth)}
+                       | ({here["main_repo"] or here["repo_root"]} - {None}))
+    found = locks.sweep(repos, locks.MANUAL_SECONDS, force=args.force)
+    for entry in found:
+        print(locks.describe(entry))
+    if not found:
+        print(f"No Git lock files in {len(repos)} repositor{'y' if len(repos) == 1 else 'ies'}.")
+    return 0 if all(entry["state"] == "removed" for entry in found) else 1
 
 
 def cmd_google_add(args: argparse.Namespace) -> int:
@@ -353,6 +460,34 @@ def main(argv: list[str] | None = None) -> int:
     hook_sub = hook.add_subparsers(dest="hook_command", required=True)
     hook_sub.add_parser("session-start", help="Print the rules for the session").set_defaults(
         func=cmd_hook)
+    hook_sub.add_parser("prompt", help="Print handoffs that wait for the session").set_defaults(
+        func=cmd_hook_prompt)
+
+    handoffs = sub.add_parser("handoff", help="Texts that sessions leave for each other")
+    handoff_sub = handoffs.add_subparsers(dest="handoff_command", required=True)
+    h_send = handoff_sub.add_parser("send", help="Leave a text for another session of this project")
+    h_send.add_argument("title")
+    h_send.add_argument("text", nargs="?", help="The text. Or use --file, or pipe it in.")
+    h_send.add_argument("--file", help="Read the text from this file")
+    h_send.add_argument("--to", help="The lane it is meant for, for example design")
+    h_send.add_argument("--from", dest="sender", help="Your own lane, for example code")
+    h_send.set_defaults(func=cmd_handoff_send)
+    h_list = handoff_sub.add_parser("list", help="Handoffs of the project of this folder")
+    h_list.add_argument("--all", action="store_true", help="Also taken and done ones")
+    h_list.set_defaults(func=cmd_handoff_list)
+    h_show = handoff_sub.add_parser("show", help="Print one handoff")
+    h_show.add_argument("id", type=int)
+    h_show.add_argument("--take", action="store_true", help="Mark it as taken by this session")
+    h_show.add_argument("--by", help="Your lane")
+    h_show.set_defaults(func=cmd_handoff_show)
+    h_done = handoff_sub.add_parser("done", help="Mark a handoff as done")
+    h_done.add_argument("id", type=int)
+    h_done.add_argument("result", nargs="?", help="What came of it, in one sentence")
+    h_done.set_defaults(func=cmd_handoff_done)
+
+    wake = sub.add_parser("wake", help="Let the hub wake a machine over the network")
+    wake.add_argument("machine", help="Name of the machine in the hub, for example desktop")
+    wake.set_defaults(func=cmd_wake)
 
     rules = sub.add_parser("rules", help="Rule sets from the hub")
     rules_sub = rules.add_subparsers(dest="rules_command", required=True)
@@ -387,6 +522,13 @@ def main(argv: list[str] | None = None) -> int:
     mcp_install.add_argument("--desktop-config", type=Path, default=None,
                              help="Path to claude_desktop_config.json, if it is not the default")
     mcp_install.set_defaults(func=cmd_mcp_install)
+
+    unlock = sub.add_parser("unlock", help="Remove Git lock files that were left behind")
+    unlock.add_argument("folder", nargs="?",
+                        help="A folder inside one repository. Default: every known repository.")
+    unlock.add_argument("--force", action="store_true",
+                        help="Also remove a lock with content while a Git process runs")
+    unlock.set_defaults(func=cmd_unlock)
 
     google = sub.add_parser("google", help="Google accounts that the hub reads and writes")
     google_sub = google.add_subparsers(dest="google_command", required=True)

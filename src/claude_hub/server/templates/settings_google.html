@@ -6,24 +6,25 @@
 <h1>Settings</h1>
 {{ m.settings_tabs("google") }}
 
-<p class="lead">The Google connection of a Claude app holds one Google account. The hub holds as many as you connect here, and every session reads and writes them through the connector. The hub reads and writes calendar events. It reads mail and sends none.</p>
+<p class="lead">The Google connection of a Claude app holds one Google account. The hub holds as many as you connect here, and every session reads and writes them through the connector. The hub reads and writes calendar events, and it reads mail. It sends mail only for a routine that you set to send, and only from an account where you allowed it.</p>
 
 <section>
   <h2>Connected accounts</h2>
   <div class="tablewrap">
   <table>
-    <thead><tr><th>Label</th><th>Account</th><th>State</th><th>Connected</th><th></th></tr></thead>
+    <thead><tr><th>Label</th><th>Account</th><th>State</th><th>May send mail</th><th>Connected</th><th></th></tr></thead>
     <tbody>
     {% for account in accounts %}
       <tr>
         <td class="mono">{{ account.label }}</td>
         <td>{{ account.email or "" }}</td>
         <td>{% if account.last_error %}<span class="pill unpushed">needs attention</span><div class="sub">{{ account.last_error }}</div>{% else %}<span class="pill merged">works</span>{% endif %}</td>
+        <td>{{ "yes" if account.can_send else "no" }}</td>
         <td class="nowrap" title="{{ account.added_at or '' }}">{{ account.added_at | reltime }}</td>
         <td><form method="post" action="/settings/google/{{ account.label }}/remove" class="inline"><button type="submit" class="quiet">Remove</button></form></td>
       </tr>
     {% else %}
-      <tr><td colspan="5" class="empty">No account yet.</td></tr>
+      <tr><td colspan="6" class="empty">No account yet.</td></tr>
     {% endfor %}
     </tbody>
   </table>
@@ -50,7 +51,7 @@
     <li>In the hub repository, on a computer with a browser, run:
       <pre class="code">hub google-add private --client PATH_TO_CLIENT_JSON</pre>
       <code>private</code> is the label of the account, and <code>PATH_TO_CLIENT_JSON</code> is the file from the last step of the project setup. The command keeps a copy of the file beside the collector configuration, so later calls need no <code>--client</code>.</li>
-    <li>The browser opens. Select the Google account, select <strong>Advanced</strong> &gt; <strong>Go to claude-hub (unsafe)</strong> on the warning, and tick every permission.</li>
+    <li>The browser opens. Select the Google account, select <strong>Advanced</strong> &gt; <strong>Go to claude-hub (unsafe)</strong> on the warning, and tick the permissions. The calendar and reading mail are needed. <strong>Send email on your behalf</strong> is optional: tick it only for an account from which routines may send mail.</li>
     <li>The command prints the address of the account. Reload this page: the account shows "works".</li>
     <li>Repeat for the second account:
       <pre class="code">hub google-add work</pre></li>
@@ -67,6 +68,7 @@
     <li>The sign-ins are in <code>google.json</code> in the data folder of the server. Only the service user can read the file. No page and no API answer shows them.</li>
     <li>Every call needs the token of a machine, the same one that the collector uses.</li>
     <li>The hub creates and changes events. It deletes none.</li>
+    <li>No session and no connector tool can send mail. The hub sends only the prepared mail of a routine, to the one address of that routine, and lists every sent mail under "Last activity".</li>
     <li>Times without a time zone count as {{ time_zone }}. Set <code>HUB_TIME_ZONE</code> on the server to change that.</li>
   </ul>
 </section>

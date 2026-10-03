@@ -61,8 +61,18 @@ def current_machine(request: Request, conn: sqlite3.Connection = Depends(get_con
     return machine
 
 
+class AdapterIn(BaseModel):
+    name: str = ""
+    mac: str
+    connected: bool = False
+    wired: bool = False
+
+
 class Hello(BaseModel):
     platform: str | None = None
+    # Network adapters of the machine, so that the hub can wake it. Sent by
+    # collectors that know how to list them.
+    adapters: list[AdapterIn] | None = None
 
 
 class AppendBody(BaseModel):
@@ -147,6 +157,10 @@ def hello(
 ) -> dict:
     if body.platform:
         conn.execute("UPDATE machines SET platform = ? WHERE id = ?", (body.platform, machine["id"]))
+    if body.adapters is not None:
+        conn.execute("UPDATE machines SET adapters = ? WHERE id = ?",
+                     (json.dumps([adapter.model_dump() for adapter in body.adapters[:20]]),
+                      machine["id"]))
     conn.commit()
     return {"machine": machine["name"], "server_version": __version__}
 
@@ -348,6 +362,56 @@ def put_inventory(
     projects.reassign_loose_sessions(conn, machine["id"])
     conn.commit()
     return {"repos": len(body.repos), "worktrees": worktrees}
+
+
+class LockIn(BaseModel):
+    path: str
+    repo: str
+    locked_at: int
+    age_seconds: int = 0
+    size: int = 0
+    state: str
+    note: str = ""
+
+
+class LocksBody(BaseModel):
+    locks: list[LockIn] = []
+
+
+# States in which the lock file still exists.
+OPEN_LOCK_STATES = ("young", "in use", "kept", "failed")
+LOCK_HISTORY_DAYS = 30
+
+
+@router.put("/locks")
+def put_locks(body: LocksBody, machine: sqlite3.Row = Depends(current_machine),
+              conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    """Record the Git lock files that this machine found on its last run."""
+    now = db.now_iso()
+    seen = []
+    for lock in body.locks:
+        conn.execute(
+            """INSERT INTO git_locks (machine_id, path, repo, locked_at, size, first_seen, last_seen,
+                                      state, note)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT (machine_id, path, locked_at) DO UPDATE SET
+                   size = excluded.size, last_seen = excluded.last_seen, state = excluded.state,
+                   note = excluded.note""",
+            (machine["id"], lock.path, lock.repo, lock.locked_at, lock.size, now, now, lock.state,
+             lock.note[:300]))
+        seen.append((lock.path, lock.locked_at))
+    # A lock that was there last time and is not reported now went away by
+    # itself: Git finished, or someone removed the file.
+    for row in conn.execute(
+            f"SELECT id, path, locked_at FROM git_locks WHERE machine_id = ? AND state IN "
+            f"({', '.join('?' * len(OPEN_LOCK_STATES))})", (machine["id"], *OPEN_LOCK_STATES)).fetchall():
+        if (row["path"], row["locked_at"]) not in seen:
+            conn.execute("UPDATE git_locks SET state = 'gone', last_seen = ? WHERE id = ?",
+                         (now, row["id"]))
+    conn.execute("DELETE FROM git_locks WHERE last_seen < strftime('%Y-%m-%dT%H:%M:%S', 'now', ?)",
+                 (f"-{LOCK_HISTORY_DAYS} days",))
+    conn.commit()
+    return {"locks": len(body.locks)}
 
 
 @router.put("/rules")

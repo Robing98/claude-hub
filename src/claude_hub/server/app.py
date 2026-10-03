@@ -5,6 +5,9 @@ from __future__ import annotations
 import base64
 import os
 import secrets
+import threading
+from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -14,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .. import __version__
 from ..rulesets import read_folder
-from . import calendar_views, db, google, google_api, ingest, views
+from . import calendar_views, db, google, google_api, hub_api, ingest, more_views, routines, views
 
 
 def drop_shipped_edits(shipped: Path, live: Path) -> None:
@@ -24,11 +27,45 @@ def drop_shipped_edits(shipped: Path, live: Path) -> None:
             (live / f"{name}.md").unlink(missing_ok=True)
 
 
+def routine_clock(app: FastAPI, stop: threading.Event, every: float) -> None:
+    """Send the mails of due routines that are set to send by themselves, until told to stop."""
+    # The first look comes after a minute, so that a restart does not send at once.
+    wait = min(60.0, every)
+    while not stop.wait(wait):
+        wait = every
+        try:
+            conn = db.connect(app.state.data_dir)
+            try:
+                moment = datetime.now(google.zone(app.state.google.time_zone))
+                for line in routines.tick(conn, app.state.google, moment):
+                    print(f"routine clock: {line}", flush=True)
+            finally:
+                conn.close()
+        except Exception as exc:  # noqa: BLE001 - the clock must outlive any single failure
+            print(f"routine clock: {exc}", flush=True)
+
+
 def create_app(data_dir: str | Path | None = None) -> FastAPI:
     data_path = Path(data_dir or os.environ.get("HUB_DATA_DIR", "./data")).resolve()
     db.init(data_path)
 
-    app = FastAPI(title="Claude hub", version=__version__, docs_url=None, redoc_url=None)
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        # Routines that send their mail by themselves need a clock. A thread
+        # looks at them every few minutes for as long as the server runs.
+        stop = threading.Event()
+        every = float(os.environ.get("HUB_TICK_SECONDS", "600"))
+        worker = None
+        if every > 0:
+            worker = threading.Thread(target=routine_clock, args=(app, stop, every), daemon=True)
+            worker.start()
+        yield
+        stop.set()
+        if worker is not None:
+            worker.join(timeout=5)
+
+    app = FastAPI(title="Claude hub", version=__version__, docs_url=None, redoc_url=None,
+                  lifespan=lifespan)
     app.state.data_dir = data_path
     rulesets = os.environ.get("HUB_RULESETS_DIR")
     app.state.rulesets_dir = Path(rulesets).resolve() if rulesets else Path.cwd() / "rulesets"
@@ -43,8 +80,10 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
     app.include_router(ingest.router)
     app.include_router(google_api.router)
+    app.include_router(hub_api.router)
     app.include_router(views.router)
     app.include_router(calendar_views.router)
+    app.include_router(more_views.router)
 
     @app.exception_handler(google.GoogleError)
     async def google_failed(request: Request, exc: google.GoogleError) -> JSONResponse:

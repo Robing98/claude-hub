@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% set active = "settings" %}
+{% block title %}Devices · Claude hub{% endblock %}
+{% block main %}
+<h1>Settings</h1>
+{{ m.settings_tabs("devices") }}
+
+<p class="lead">The hub server is always on. It can wake a computer that sleeps or is shut down, with a signal over the network cable (Wake-on-LAN). A session uses the connector tool <code>machine_wake</code> for the same.</p>
+
+{% if woke %}<p class="notice">The wake signal for {{ woke }} is sent. A computer needs up to a minute until its collector reports again.</p>{% endif %}
+
+<section>
+  <h2>Computers</h2>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Machine</th><th>Last report</th><th>Network adapter that wakes it</th><th></th></tr></thead>
+    <tbody>
+    {% for machine in machines %}
+      <tr>
+        <td>{{ machine.name }}<div class="sub">{{ machine.platform or "" }}</div></td>
+        <td title="{{ machine.last_seen or '' }}">{{ (machine.last_seen | reltime) or "never" }}</td>
+        <td>
+          <form method="post" action="/settings/devices/{{ machine.id }}/adapter" class="inline">
+            {% if machine.adapters %}
+            <select name="mac" aria-label="Network adapter of {{ machine.name }}">
+              <option value="">{{ "Not set" if not machine.guess else "Automatic: the one cable adapter" }}</option>
+              {% for adapter in machine.adapters %}
+              <option value="{{ adapter.mac }}"{% if adapter.mac | lower | replace("-", ":") == machine.chosen %} selected{% endif %}>{{ adapter.name or "adapter" }} · {{ adapter.mac }}{{ " · cable" if adapter.wired else "" }}{{ "" if adapter.connected else " · not connected" }}</option>
+              {% endfor %}
+            </select>
+            {% else %}
+            <input type="text" name="other" value="{{ machine.chosen }}" placeholder="aa:bb:cc:dd:ee:ff" aria-label="Hardware address of {{ machine.name }}">
+            {% endif %}
+            <button type="submit" class="quiet">Save</button>
+          </form>
+          {% if not machine.adapters %}<div class="sub">The collector of this machine has not reported its adapters yet. Update it, or type the address.</div>{% endif %}
+        </td>
+        <td><form method="post" action="/settings/devices/{{ machine.id }}/wake" class="inline"><button type="submit"{% if not machine.chosen and not machine.guess %} disabled{% endif %}>Wake</button></form></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" class="empty">No machines yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section>
+  <h2>Once per computer: allow waking</h2>
+  <p class="hint">The hub only sends the signal. The computer must be set to listen for it. The names of the settings differ between mainboards and network cards.</p>
+  <ol class="steps">
+    <li>Connect the computer with a network cable. Over Wi-Fi, waking mostly does not work.</li>
+    <li>In the firmware setup (BIOS or UEFI), turn on <strong>Wake on LAN</strong>. Some boards call it <strong>Power On By PCI-E</strong>, and it only works when <strong>ErP</strong> is turned off.</li>
+    <li>In Windows, open <strong>Device Manager</strong> &gt; <strong>Network adapters</strong> &gt; the cable adapter &gt; <strong>Properties</strong>. Under <strong>Power Management</strong>, tick <strong>Allow this device to wake the computer</strong> and <strong>Only allow a magic packet to wake the computer</strong>. Under <strong>Advanced</strong>, turn on <strong>Wake on Magic Packet</strong>.</li>
+    <li>To wake from a full shutdown, turn off <strong>Fast startup</strong>: <strong>Control Panel</strong> &gt; <strong>Power Options</strong> &gt; <strong>Choose what the power buttons do</strong>.</li>
+    <li>Put the computer to sleep and select <strong>Wake</strong> here. Then repeat the test with the computer shut down.</li>
+  </ol>
+  <p class="hint">After waking, the computer stops at its sign-in screen. The collector reports again once you are signed in, unless it runs as a task that starts with the computer.</p>
+</section>
+
+<section>
+  <h2>Limits</h2>
+  <ul class="steps">
+    <li>The signal reaches only computers in the same network as the hub server. A laptop that is elsewhere cannot be woken.</li>
+    <li>The signal carries no secret. Any device in the home network can send it.</li>
+    <li>If the signal has to go to another address than <code>255.255.255.255</code>, set <code>HUB_WAKE_BROADCAST</code> on the server, for example to <code>192.168.178.255</code>.</li>
+  </ul>
+</section>
+{% endblock %}

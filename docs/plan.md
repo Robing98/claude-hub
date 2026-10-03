@@ -217,6 +217,17 @@ Brain parts, as the order of what comes next:
 
 A browser of its own for agents: a Chromium with a lasting profile and a remote view, so that agent work does not open tabs in Robin's Chrome windows. Sign-ins stay in the profile. Robin signs in himself, with the 1Password extension in that profile. Agents never receive a password. Open: where it runs. The decision "no Docker and no agent sessions on the Proxmox host" speaks for the desktop. The remote view needs a password of its own, because it shows signed-in sessions.
 
+Built on 2026-10-03, later: handoffs between lanes, routines (reminders with an optional prepared mail), Wake-on-LAN, and the connector tool `hub_status`. The cerebellum part of the analogy is the **Routines** page.
+
+Decided by Robin on 2026-10-03: the hub may send mail, as an option. Built that way: sending is off unless the Google account has the permission to send and the routine is set to send, on a press or by itself. Sessions cannot send and cannot draft a sending routine.
+
+Ideas from the same day, not decided:
+
+- Screens of all devices: an existing remote desktop tool behind the VPN, linked from the hub. Not a part to build.
+- The connector as a remote connector in the Claude settings: Anthropic's cloud would have to reach the hub over the public internet. Only after the hub has a real sign-in.
+- Prescriptions: one routine per medication, with the request mail prepared. The texts come from the mail history once the Google accounts are signed in.
+- Health section: an index in the vault over the documents in `OneDrive\Arzt` and `OneDrive\Papierkram\Krankenkasse`. The documents stay where they are.
+
 More Claude accounts for fixed functions: the hub side is one configuration folder per account and a label per function. The hub does not switch accounts when a limit is reached, and it uses only the official Claude apps. Ask support before the second account.
 
 Folder order, an idea for the hub: the collector already walks the drives. It can report what makes a drive untidy: several copies of one repository, source folders without Git, and release archives beside working copies. A first look at drive D on the desktop found the GolleIT plugins in four places.

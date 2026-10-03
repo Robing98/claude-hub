@@ -14,9 +14,10 @@ from typing import Any, BinaryIO
 from urllib.parse import urlencode
 
 from .. import __version__
-from . import briefing, google_tools
+from . import briefing, google_tools, handoff, hub_tools, locks
 from .client import Client, HubError
 from .config import Config
+from .gitscan import resolve_dir
 
 PROTOCOL_VERSION = "2025-06-18"
 SERVER_NAME = "claude-hub"
@@ -26,7 +27,7 @@ INSTRUCTIONS = (
     "hub_rules with the path of that folder and follow what it returns. When the returned text "
     "lists more rule sets, load one with hub_ruleset before the work it covers. Never edit rule "
     "files in a project. To change a rule, call hub_propose_rule. Robin decides in the hub.\n\n"
-    + google_tools.INSTRUCTIONS
+    + hub_tools.INSTRUCTIONS + "\n\n" + google_tools.INSTRUCTIONS
 )
 
 FOLDER = {"type": "string",
@@ -73,8 +74,22 @@ TOOLS = [
             "required": ["ruleset", "text", "reason"],
         },
     },
+    {
+        "name": "hub_unlock",
+        "title": "Remove Git lock files that were left behind",
+        "description": "Remove stale Git lock files in the repository of a folder. Call it when "
+                       "Git reports that index.lock exists, and after you ran a Git command in "
+                       "the shell on Robin's computer: that shell cannot delete files, so Git "
+                       "leaves its lock behind there. A lock that Git may still use stays.",
+        "inputSchema": {"type": "object", "properties": {"folder": FOLDER}, "required": ["folder"]},
+    },
+    *hub_tools.TOOLS,
     *google_tools.TOOLS,
 ]
+
+# The configuration file that this server was started with, when it is not
+# the default one. Commands in rule texts must name it.
+CONFIG_PATH: Path | None = None
 
 
 def _text(text: str, error: bool = False) -> dict[str, Any]:
@@ -92,23 +107,42 @@ def call_tool(cfg: Config, cache_dir: Path, name: str, args: dict[str, Any]) -> 
                 "GET", f"/api/v1/briefing?{query}")
         except HubError as exc:
             return _text(f"The hub is not reachable: {exc}", error=True)
+        # Work that another session left for this project belongs to the start as well.
+        listed, waiting = handoff.listing(cfg, folder)
+        waiting = (f"\n\n## Handoffs waiting in this project\n\n{waiting}\n\nBefore you act on one, "
+                   "call handoff_take.") if listed and waiting.startswith("#") else ""
         if not answer.get("hub_rules", True):
             return _text(f"The hub serves no rules for {answer.get('project')}. This project "
-                         "keeps its rules in its own files. Read those.")
-        return _text(answer.get("text") or "No rule set applies to this folder.")
+                         "keeps its rules in its own files. Read those." + waiting)
+        return _text((briefing.fill_commands(answer.get("text") or "", CONFIG_PATH)
+                      or "No rule set applies to this folder.") + waiting)
     if name == "hub_ruleset":
         wanted = str(args.get("name") or "").strip()
         text, state = briefing.fetch_ruleset(cfg, cache_dir, wanted)
         if text is None:
             return _text(f"No rule set '{wanted}' ({state}).", error=True)
         note = "\n(The hub was not reachable. This is the last saved copy.)" if state == "cached" else ""
-        return _text(text + note)
+        return _text(briefing.fill_commands(text, CONFIG_PATH) + note)
     if name == "hub_propose_rule":
         filed, message = briefing.propose(
             cfg, str(args.get("folder") or ""), str(args.get("ruleset") or ""),
             str(args.get("text") or ""), str(args.get("reason") or ""),
             str(args.get("mode") or "add"), str(args.get("source") or "Cowork"))
         return _text(message, error=not filed)
+    if name == "hub_unlock":
+        folder = str(args.get("folder") or "").strip()
+        info = resolve_dir(folder)
+        root = info["main_repo"] or info["repo_root"]
+        if not root:
+            return _text(f"{folder or 'That'} is not inside a Git repository on this computer.", error=True)
+        found = locks.sweep([root], locks.MANUAL_SECONDS)
+        if not found:
+            return _text(f"No Git lock files in {root}.")
+        return _text("\n".join(locks.describe(entry) for entry in found),
+                     error=any(entry["state"] != "removed" for entry in found))
+    if name in hub_tools.NAMES:
+        text, failed = hub_tools.call(cfg, name, args)
+        return _text(text, error=failed)
     if name in google_tools.NAMES:
         text, failed = google_tools.call(cfg, name, args)
         return _text(text, error=failed)

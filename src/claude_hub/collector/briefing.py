@@ -128,14 +128,23 @@ def emit(text: str) -> None:
     sys.stdout.write(text)
 
 
-def hook_entry(config_path: Path | None) -> dict:
+# Event, the command that the hook runs, and its time limit in seconds.
+# The prompt hook delivers handoffs. It runs before every prompt, so it is short.
+HOOKS = (("SessionStart", "hook session-start", 20), ("UserPromptSubmit", "hook prompt", 10))
+
+
+def hook_entry(config_path: Path | None, command: str = "hook session-start",
+               timeout: int = 20) -> dict:
     return {"hooks": [{"type": "command",
-                       "command": rules_command(config_path) + " hook session-start",
-                       "timeout": 20}]}
+                       "command": rules_command(config_path) + " " + command,
+                       "timeout": timeout}]}
 
 
 def install_hook(config_dir: Path, config_path: Path | None, remove: bool = False) -> str:
-    """Add the SessionStart hook to a Claude Code settings file, or remove it.
+    """Add the hub hooks to a Claude Code settings file, or remove them.
+
+    One hook loads the rules when a session starts. One delivers handoffs
+    with a prompt.
 
     Other settings and other hooks are left as they are. The first change
     keeps a backup beside the file.
@@ -151,21 +160,21 @@ def install_hook(config_dir: Path, config_path: Path | None, remove: bool = Fals
             return f"{settings_path}: unexpected content. Nothing changed."
 
     hooks = settings.setdefault("hooks", {})
-    entries = hooks.get("SessionStart") or []
-    kept = [entry for entry in entries
-            if HOOK_MARKER not in json.dumps(entry) or "hook session-start" not in json.dumps(entry)]
-    had = len(kept) != len(entries)
-    if remove:
-        if not had:
-            return f"{settings_path}: no hub hook found. Nothing changed."
-        action = "removed"
-    else:
-        kept.append(hook_entry(config_path))
-        action = "updated" if had else "installed"
-    if kept:
-        hooks["SessionStart"] = kept
-    else:
-        hooks.pop("SessionStart", None)
+    had = False
+    for event, command, timeout in HOOKS:
+        entries = hooks.get(event) or []
+        kept = [entry for entry in entries
+                if HOOK_MARKER not in json.dumps(entry) or command not in json.dumps(entry)]
+        had = had or len(kept) != len(entries)
+        if not remove:
+            kept.append(hook_entry(config_path, command, timeout))
+        if kept:
+            hooks[event] = kept
+        else:
+            hooks.pop(event, None)
+    if remove and not had:
+        return f"{settings_path}: no hub hook found. Nothing changed."
+    action = "removed" if remove else "updated" if had else "installed"
     if not hooks:
         settings.pop("hooks", None)
 
