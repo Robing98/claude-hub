@@ -179,7 +179,8 @@ Built: token counts per session, day, and model from the transcripts, subagents 
 
 Open:
 
-- Cowork, chat, and Claude Design are not counted. They use the same subscription limits.
+- Built: Cowork sessions that ran on a computer are collected from the data folder of the desktop app and counted under the account "cowork".
+- Cowork sessions that ran in the cloud, chat, and Claude Design are not counted. They use the same subscription limits. A cloud session could report its own totals through the connector.
 - A view against the limits of the plan: how much of the week is used, and by which project.
 - Cost per result: per merged pull request, per roadmap item, per content unit.
 

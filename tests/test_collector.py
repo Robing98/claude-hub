@@ -251,3 +251,71 @@ def test_default_config_path_ignores_empty_variables(monkeypatch, tmp_path):
     assert config.default_path() == tmp_path / ".config" / "claude-hub" / "collector.toml"
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     assert config.default_path() == tmp_path / "xdg" / "claude-hub" / "collector.toml"
+
+
+def cowork_session(root: Path, name: str, session_id: str, lines_for) -> Path:
+    """Write a Cowork session folder as the Claude desktop app lays it out."""
+    session = root / "acc-1" / "org-1" / f"local_{name}"
+    cwd = str(session / "outputs")
+    folder = session / ".claude" / "projects" / "C--encoded-outputs"
+    folder.mkdir(parents=True)
+    (folder / f"{session_id}.jsonl").write_bytes(to_jsonl(lines_for(cwd)))
+    # The audit log is not a transcript and must stay where it is.
+    (session / "audit.jsonl").write_text('{"type": "command_lifecycle", "session_id": "x"}\n')
+    return session
+
+
+def test_cowork_sessions_are_collected_and_sorted(repo: Path, tmp_path: Path, live_server: str, data_dir: Path):
+    def read(session_id, cwd, file_path, index):
+        return {"type": "assistant", "sessionId": session_id, "cwd": cwd, "uuid": f"t{index}",
+                "timestamp": f"2026-10-01T11:00:0{index}.000Z", "isSidechain": False,
+                "message": {"id": f"tm{index}", "model": "claude-test", "stop_reason": "tool_use",
+                            "content": [{"type": "tool_use", "id": f"tt{index}", "name": "Read",
+                                         "input": {"file_path": file_path}}]}}
+
+    root = tmp_path / "Claude" / "local-agent-mode-sessions"
+    # This session worked in a connected folder, which Cowork names by its sandbox path.
+    in_repo = cowork_session(root, "a", "cw-repo", lambda cwd: make_lines("cw-repo", cwd, ["Review the docs"]) + [
+        read("cw-repo", cwd, "/sessions/busy-fox/mnt/demo/README.md", 1),
+        read("cw-repo", cwd, "/sessions/busy-fox/mnt/demo/docs/plan.md", 2)])
+    for name in ("b", "c"):
+        cowork_session(root, name, f"cw-{name}", lambda cwd, name=name: make_lines(f"cw-{name}", cwd, ["A question"]))
+    (in_repo / ".claude" / "CLAUDE.md").write_text("# Not an instruction source\n")
+    (root / "acc-1" / "org-1" / "local_empty" / ".claude").mkdir(parents=True)    # no transcripts yet
+
+    config = tmp_path / "collector.toml"
+    code_dir = tmp_path / "claude-code"
+    config.write_text(f'server_url = "{live_server}"\ntoken = "{TOKEN}"\n'
+                      f'cowork_dir = "{root.as_posix()}"\nscan_roots = ["{repo.parent.as_posix()}"]\n'
+                      f'[[accounts]]\nlabel = "max-1"\nconfig_dir = "{code_dir.as_posix()}"\n')
+    cfg = load(config)
+    assert [(a.label, a.kind) for a in cfg.accounts] == [("max-1", "claude-code")] + [("cowork", "cowork")] * 3
+    off = tmp_path / "off.toml"
+    off.write_text(config.read_text().replace("cowork_dir", "cowork = false\ncowork_dir"))
+    assert [a.kind for a in load(off).accounts] == ["claude-code"]
+
+    run_once(cfg)
+    # A second run finds the repository of the first session through the inventory.
+    run_once(cfg)
+    conn = db.connect(data_dir)
+    rows = {row["session_id"]: row for row in conn.execute(
+        """SELECT s.session_id, a.label, p.key, p.name FROM sessions s
+           JOIN accounts a ON a.id = s.account_id LEFT JOIN projects p ON p.id = s.project_id""")}
+    assert set(rows) == {"cw-repo", "cw-b", "cw-c"}                 # no audit log, no empty folder
+    assert all(row["label"] == "cowork" for row in rows.values())
+    assert rows["cw-repo"]["key"] == "git:github.com/example/demo"
+    # The two sessions without a repository share one project instead of two inbox entries.
+    assert rows["cw-b"]["key"] == rows["cw-c"]["key"] and rows["cw-b"]["name"] == "Cowork"
+    assert rows["cw-b"]["key"].endswith("/local-agent-mode-sessions")
+    # A Cowork session folder is no source of instruction files.
+    assert conn.execute("SELECT COUNT(*) FROM rule_files WHERE content LIKE '%Not an instruction%'").fetchone()[0] == 0
+    report = usage.report(conn, load_prices(None), 0)
+    assert [(item["name"], len(item["sessions"])) for item in report["accounts"]] == [("cowork", 3)]
+    conn.close()
+
+    # The session hook is for Claude Code. It is never written into a Cowork session folder.
+    from claude_hub.collector import cli
+    assert cli.main(["--config", str(config), "hooks", "install"]) == 0
+    assert (code_dir / "settings.json").exists()
+    assert not list(root.rglob("settings.json"))
+    assert cli.main(["--config", str(config), "check"]) == 0

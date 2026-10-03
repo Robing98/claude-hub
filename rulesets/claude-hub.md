@@ -18,7 +18,7 @@ A self-hosted hub that collects Claude Code sessions, worktrees, and instruction
 ## Rules
 
 - The collector and the shared modules use the standard library only. The one exception is `tomli` on Python 3.10.
-- The collector is read-only towards repositories: it never fetches, commits, or pushes, and it takes no Git locks. From a Claude Code configuration directory it reads only transcripts and Markdown instruction files, never settings or credentials.
+- The collector is read-only towards repositories: it never fetches, commits, or pushes, and it takes no Git locks. From a Claude Code configuration directory it reads only transcripts and Markdown instruction files, never settings or credentials. From a Cowork session folder it reads only transcripts.
 - One exception: the rule export. `rules export` writes the folder `.claude-hub/` into a project and one line into the local Git exclude file. A collector run refreshes that folder only where an export already exists.
 - A rule set in `rulesets/` can have a newer version in the hub. Run `hub rules-pull` before you edit a set, so that you do not overwrite a change that was accepted there.
 - The transcript format is internal to Claude Code. Parse defensively and skip what is unknown. A change to what `parse_meta` derives raises `PARSER_VERSION`.

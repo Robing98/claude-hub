@@ -26,6 +26,13 @@ token = "PASTE_TOKEN_HERE"
 scan_roots = []
 scan_depth = 4
 
+# Cowork sessions that ran on this computer are collected as well, under the
+# account label "cowork". The Claude desktop app keeps their transcripts in its
+# own data folder. Set cowork = false to leave them out, or set cowork_dir when
+# the app keeps them somewhere else.
+# cowork = true
+# cowork_dir = "C:/Users/NAME/AppData/Roaming/Claude/local-agent-mode-sessions"
+
 # One entry per Claude Code account on this machine. Each account has its own
 # configuration directory (CLAUDE_CONFIG_DIR). The label is free text.
 [[accounts]]
@@ -34,10 +41,17 @@ config_dir = "~/.claude"
 """
 
 
+COWORK = "cowork"
+
+
 @dataclass
 class Account:
     label: str
     config_dir: Path
+    # "claude-code" for a configuration directory of Claude Code, or "cowork"
+    # for the folder of one Cowork session. Only transcripts are read from
+    # the second kind: no instruction files, and no hook is installed there.
+    kind: str = "claude-code"
 
 
 @dataclass
@@ -52,6 +66,29 @@ class Config:
 
 class ConfigError(Exception):
     pass
+
+
+def default_cowork_dir() -> Path | None:
+    """Where the Claude desktop app keeps the Cowork sessions that ran on this computer."""
+    if sys.platform == "win32":
+        base = Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming")
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        return None
+    return base / "Claude" / "local-agent-mode-sessions"
+
+
+def cowork_accounts(root: Path | None) -> list[Account]:
+    """One entry per Cowork session folder that holds transcripts.
+
+    The layout is ``<account>/<organization>/local_<session>/.claude/projects``,
+    the same shape as a Claude Code configuration directory.
+    """
+    if root is None or not root.is_dir():
+        return []
+    return [Account(COWORK, path, COWORK)
+            for path in sorted(root.glob("*/*/local_*/.claude")) if (path / "projects").is_dir()]
 
 
 def default_path() -> Path:
@@ -93,6 +130,10 @@ def load(path: Path) -> Config:
     if not accounts:
         fallback = os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude"
         accounts = [Account("default", Path(fallback).expanduser())]
+
+    if raw.get("cowork", True):
+        folder = raw.get("cowork_dir")
+        accounts += cowork_accounts(Path(str(folder)).expanduser() if folder else default_cowork_dir())
 
     return Config(
         server_url=server_url,

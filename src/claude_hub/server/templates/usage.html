@@ -11,7 +11,7 @@
 {% endmacro %}
 {% block main %}
 <h1>Usage</h1>
-<p class="lead">Tokens that Claude Code sessions used, subagents included, and what the same tokens cost at API prices. A subscription is a flat fee, so this is a measure to compare projects, not a bill.</p>
+<p class="lead">Tokens that Claude Code sessions and local Cowork sessions used, subagents included, and what the same tokens cost at API prices. A subscription is a flat fee, so this is a measure to compare projects, not a bill.</p>
 <p class="filters">
   {% for period in periods %}
   <a href="/usage?days={{ period }}"{% if days == period %} class="on"{% endif %}>{{ "Last %d days" | format(period) if period else "All time" }}</a>
@@ -65,6 +65,23 @@
     </tbody>
   </table>
   </div>
+</section>
+{% endif %}
+
+{% if report.accounts | length > 1 %}
+<section>
+  <h2>By account</h2>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Account</th><th class="num">At API prices</th><th class="num">Share</th><th class="num">Output</th><th class="num">New input</th><th class="num">Cache reads</th><th class="num">Sessions</th></tr></thead>
+    <tbody>
+    {% for item in report.accounts %}
+      <tr><td>{{ item.name }}</td>{{ row_cells(item) }}</tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="hint">"cowork" holds the Cowork sessions that ran on one of your computers. Cowork sessions that ran in the cloud are not counted.</p>
 </section>
 {% endif %}
 

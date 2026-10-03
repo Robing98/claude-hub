@@ -33,13 +33,21 @@ def run_once(cfg: config_module.Config, sessions: bool = True, inventory: bool =
         _, answer = client.request("GET", "/api/v1/sessions/state")
         state = answer["sessions"]
         git_cache: dict[str, dict] = {}
+        cowork = [0, 0, 0]      # folders, sessions, bytes
         for account in cfg.accounts:
             if not account.config_dir.is_dir():
                 log(f"account '{account.label}': {account.config_dir} does not exist, skipped")
                 continue
             files, total = sync_account(client, account, state, cfg.chunk_bytes, git_cache,
                                         repos_seen, log)
-            log(f"account '{account.label}': uploaded {files} sessions, {total / 1e6:.1f} MB")
+            if account.kind == config_module.COWORK:
+                # Every Cowork session has a folder of its own. One line covers them all.
+                cowork = [cowork[0] + 1, cowork[1] + files, cowork[2] + total]
+            else:
+                log(f"account '{account.label}': uploaded {files} sessions, {total / 1e6:.1f} MB")
+        if cowork[0]:
+            log(f"Cowork on this computer: {cowork[0]} session folders, uploaded {cowork[1]} "
+                f"sessions, {cowork[2] / 1e6:.1f} MB")
 
     if inventory:
         repos = build_inventory(cfg.scan_roots, cfg.scan_depth, repos_seen)
@@ -51,7 +59,8 @@ def run_once(cfg: config_module.Config, sessions: bool = True, inventory: bool =
             sources = [
                 {"scope": "user", "account": account.label, "base_path": str(account.config_dir),
                  "files": scan_user(account.config_dir)}
-                for account in cfg.accounts if account.config_dir.is_dir()
+                for account in cfg.accounts
+                if account.kind != config_module.COWORK and account.config_dir.is_dir()
             ]
             sources += [
                 {"scope": "project", "base_path": repo["path"], "remote": repo["remote"],
@@ -97,9 +106,15 @@ def cmd_check(args: argparse.Namespace) -> int:
         return 1
     print(f"Connected to {cfg.server_url} as machine '{hello['machine']}' "
           f"(server {hello['server_version']}).")
+    folders = transcripts = 0
     for account in cfg.accounts:
         count = sum(1 for _ in find_transcripts(account.config_dir))
-        print(f"Account '{account.label}': {count} transcripts in {account.config_dir}")
+        if account.kind == config_module.COWORK:
+            folders, transcripts = folders + 1, transcripts + count
+        else:
+            print(f"Account '{account.label}': {count} transcripts in {account.config_dir}")
+    if folders:
+        print(f"Cowork on this computer: {transcripts} transcripts in {folders} session folders")
     return 0
 
 
@@ -234,7 +249,9 @@ def cmd_mcp_install(args: argparse.Namespace) -> int:
 def cmd_hooks_install(args: argparse.Namespace) -> int:
     cfg = config_module.load(args.config)
     for account in cfg.accounts:
-        print(briefing.install_hook(account.config_dir, _custom_config(args), remove=args.remove))
+        # The hook belongs to Claude Code. A Cowork session folder is left alone.
+        if account.kind != config_module.COWORK:
+            print(briefing.install_hook(account.config_dir, _custom_config(args), remove=args.remove))
     return 0
 
 

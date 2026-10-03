@@ -83,6 +83,14 @@ schtasks /Create /TN "Claude hub collector" /SC ONLOGON /TR "pythonw -m claude_h
 
 This command has not been verified on Windows yet. Repositories inside WSL need their own collector inside WSL, with its own token. `hub wsl-setup` installs it. Each collector reports only the worktrees of its own system.
 
+### Cowork sessions
+
+The collector also uploads the Cowork sessions that ran on the computer. The Claude desktop app keeps their transcripts in its data folder, under `local-agent-mode-sessions`. They appear with the account label `cowork`.
+
+- A Cowork session that worked in a connected folder is assigned to the project of that folder. The others share one project named "Cowork".
+- The collector reads only the transcripts in those folders. It reads no audit log and no instruction file there, and it installs no hook there.
+- To leave Cowork out, set `cowork = false` in the collector configuration. If the app keeps the sessions somewhere else, set `cowork_dir`.
+
 ## Shortcuts on Windows
 
 `hub.bat` in the repository folder wraps the commands. It uses the right Python on each machine. Run `hub` without arguments for the full list.
@@ -200,7 +208,7 @@ Squash merges are not detected yet, because that needs the pull request state fr
 - The transcript format is internal to Claude Code and can change. The parser skips what it does not know. After a parser update, run `claude-hub reparse` to rebuild the session fields from the stored transcripts.
 - Sessions of the desktop app, claude.ai chats, and artifacts are not collected yet.
 - Subagent transcripts are stored for their token usage. They cannot be read in the browser yet.
-- Usage covers Claude Code only. Cowork, chat, and Claude Design use the same subscription limits and are not counted.
+- Usage covers Claude Code and the Cowork sessions that ran on your computers. Cowork sessions that ran in the cloud, chat, and Claude Design use the same subscription limits and are not counted.
 
 ## Development
 

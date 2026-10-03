@@ -18,6 +18,7 @@ _FROM = """
     JOIN sessions s ON s.pk = u.session_pk
     LEFT JOIN sessions parent
            ON parent.machine_id = s.machine_id AND parent.session_id = s.parent_session_id
+    LEFT JOIN accounts a ON a.id = COALESCE(parent.account_id, s.account_id)
 """
 _SUMS = ", ".join(f"SUM(u.{name}) AS {name}" for name in ("messages", *FIELDS))
 
@@ -52,19 +53,22 @@ def report(conn: sqlite3.Connection, prices: Prices, days: int) -> dict[str, Any
     """Totals for a period, split by project, workspace, model, and day."""
     rows = conn.execute(
         f"""SELECT COALESCE(parent.project_id, s.project_id) AS project_id,
-                   COALESCE(parent.pk, s.pk) AS root_pk, u.day, u.model, {_SUMS}
+                   COALESCE(parent.pk, s.pk) AS root_pk, u.day, u.model,
+                   COALESCE(a.label, '') AS account, {_SUMS}
             {_FROM} WHERE u.day >= ?
-            GROUP BY 1, 2, u.day, u.model""",
+            GROUP BY 1, 2, u.day, u.model, 5""",
         (since_day(days),),
     ).fetchall()
     total = empty()
     by_project: dict[int | None, dict[str, Any]] = {}
     by_model: dict[str, dict[str, Any]] = {}
     by_day: dict[str, dict[str, Any]] = {}
+    by_account: dict[str, dict[str, Any]] = {}
     for row in rows:
         for bucket in (total, by_project.setdefault(row["project_id"], empty()),
                        by_model.setdefault(row["model"], empty()),
-                       by_day.setdefault(row["day"], empty())):
+                       by_day.setdefault(row["day"], empty()),
+                       by_account.setdefault(row["account"], empty())):
             _add(bucket, row, prices)
             bucket["sessions"].add(row["root_pk"])
 
@@ -112,8 +116,9 @@ def report(conn: sqlite3.Connection, prices: Prices, days: int) -> dict[str, Any
         "models": ranked([{**b, "name": name, "priced": prices.rates(name) is not None}
                           for name, b in by_model.items()]),
         "days": [{**b, "day": day} for day, b in sorted(by_day.items(), reverse=True)],
+        "accounts": ranked([{**b, "name": name or "unknown"} for name, b in by_account.items()]),
     }
-    for group in ("projects", "workspaces", "models", "days"):
+    for group in ("projects", "workspaces", "models", "days", "accounts"):
         for item in result[group]:
             item["share"] = share(item)
     top = max((item["cost"] for item in result["days"]), default=0.0)

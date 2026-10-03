@@ -48,6 +48,30 @@ def worktree_base(path: str | None) -> str | None:
     return match.group(1) if match else None
 
 
+# A Cowork session runs in a folder of its own inside the data folder of the
+# desktop app. That folder says nothing about the project it worked on.
+_COWORK = re.compile(r"^(.*/local-agent-mode-sessions)/[^/]+/[^/]+/local_[^/]+(?:/.*)?$")
+# Inside its sandbox, Cowork sees a connected folder under this path.
+_VM_MOUNT = re.compile(r"^/sessions/[^/]+/mnt/([^/]+)(?:/.*)?$")
+
+
+def cowork_root(path: str | None) -> str | None:
+    """Return the folder that holds all Cowork sessions, if ``path`` lies in one of them."""
+    match = _COWORK.match(norm_path(path))
+    return match.group(1) if match else None
+
+
+def _mounted(paths: list[tuple[str, int]], folder: str) -> int | None:
+    """Find the project of a connected folder that a Cowork session names by its sandbox path."""
+    match = _VM_MOUNT.match(norm_path(folder))
+    if not match:
+        return None
+    name = match.group(1).lower()
+    hits = {project_id for path, project_id in paths if basename(path).lower() == name}
+    # Two repositories with the same folder name cannot be told apart from here.
+    return hits.pop() if len(hits) == 1 else None
+
+
 def _inventory_paths(conn: sqlite3.Connection, machine_id: int) -> list[tuple[str, int]]:
     rows = conn.execute(
         """SELECT r.project_id, r.path AS repo_path, w.path AS wt_path
@@ -90,7 +114,7 @@ def project_from_work_dirs(conn: sqlite3.Connection, machine_id: int,
     paths = _inventory_paths(conn, machine_id)
     score: dict[int, int] = {}
     for folder, count in work_dirs.items():
-        project_id = _containing(paths, folder)
+        project_id = _containing(paths, folder) or _mounted(paths, folder)
         if project_id:
             score[project_id] = score.get(project_id, 0) + count
     if not score:
@@ -120,6 +144,11 @@ def resolve_session_project(
     if repo_root:
         return project_for_local_repo(conn, machine["name"], repo_root)
     if cwd:
+        shared = cowork_root(cwd)
+        if shared:
+            # Cowork sessions that touched no known repository share one project,
+            # so that each of them does not open an inbox entry of its own.
+            return _get_or_create(conn, f"dir:{machine['name']}:{norm_path(shared)}", "dir", "Cowork")
         # A removed worktree belongs to the folder of its repository.
         return project_for_dir(conn, machine["name"], worktree_base(cwd) or cwd)
     return None
