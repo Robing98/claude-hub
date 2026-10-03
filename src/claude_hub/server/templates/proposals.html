@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% set active = "rules" %}
+{% block title %}Rule proposals · Claude hub{% endblock %}
+{% block main %}
+<p class="crumbs"><a href="/rulesets">Rule sets</a></p>
+<h1>Rule proposals</h1>
+<p class="lead">Rule changes that sessions propose. Nothing changes until you accept. An accepted change applies from the next session start.</p>
+
+<section>
+  <h2>Open <span class="count">{{ pending | length }}</span></h2>
+  {% for item in pending %}
+  <div class="box">
+    <div class="boxhead">
+      <span><a href="/rulesets/{{ item.ruleset }}">{{ item.title }}</a>
+        <span class="pill">{{ "replace the whole set" if item.mode == "replace" else "add to the set" }}</span></span>
+      <span class="sub" title="{{ item.created_at }}">{{ item.created_at | reltime }}{% if item.source %} · {{ item.source }}{% endif %}{% if item.project_name %} · {{ item.project_name }}{% endif %}{% if item.machine %} · {{ item.machine }}{% endif %}</span>
+    </div>
+    {% if item.reason %}<p class="hint">Reason: {{ item.reason }}</p>{% endif %}
+    {% if item.missing %}<p class="notice">The rule set "{{ item.ruleset }}" no longer exists. You can only reject this proposal.</p>{% endif %}
+    {% if item.diff %}<details class="tool"><summary>What changes</summary><pre>{{ item.diff }}</pre></details>{% endif %}
+    <form method="post" action="/proposals/{{ item.id }}/accept">
+      <textarea name="text" rows="{{ [item.text.count("\n") + 2, 30] | min }}" aria-label="Proposed text for {{ item.title }}" spellcheck="false">{{ item.text }}</textarea>
+      <div class="toolbar">
+        {% if not item.missing %}<button type="submit">Accept</button>{% endif %}
+        <button type="submit" class="quiet" formaction="/proposals/{{ item.id }}/reject">Reject</button>
+      </div>
+    </form>
+    <p class="hint">You can change the text before you accept.</p>
+  </div>
+  {% else %}
+  <p class="empty">No open proposals.</p>
+  {% endfor %}
+</section>
+
+{% if decided %}
+<section>
+  <h2>Decided</h2>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Decision</th><th>Set</th><th>Text</th><th>From</th><th>Decided</th></tr></thead>
+    <tbody>
+    {% for item in decided %}
+      <tr>
+        <td><span class="pill {{ 'merged' if item.status == 'accepted' else '' }}">{{ item.status }}</span></td>
+        <td><a href="/rulesets/{{ item.ruleset }}">{{ item.title }}</a></td>
+        <td><div class="text">{{ (item.applied_text or item.text) | truncate(300) }}</div>{% if item.reason %}<div class="sub">Reason: {{ item.reason }}</div>{% endif %}</td>
+        <td>{{ item.source or item.machine or "" }}{% if item.project_name %}<div class="sub">{{ item.project_name }}</div>{% endif %}</td>
+        <td class="nowrap" title="{{ item.decided_at or '' }}">{{ item.decided_at | reltime }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

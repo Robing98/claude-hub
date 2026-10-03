@@ -24,6 +24,10 @@ if /i "%CMD%"=="loop" goto loop
 if /i "%CMD%"=="config" goto config
 if /i "%CMD%"=="open" goto open
 if /i "%CMD%"=="rules" goto rules
+if /i "%CMD%"=="rules-export" goto rules_export
+if /i "%CMD%"=="rules-pull" goto rules_pull
+if /i "%CMD%"=="mcp-install" goto mcp_install
+if /i "%CMD%"=="mcp-remove" goto mcp_remove
 if /i "%CMD%"=="hooks-install" goto hooks_install
 if /i "%CMD%"=="hooks-remove" goto hooks_remove
 if /i "%CMD%"=="wsl-hooks-install" goto wsl_hooks_install
@@ -51,8 +55,12 @@ echo   config         Open the collector configuration in Notepad
 echo   open           Open the hub in the browser
 echo   rules          Show the rules that a session in this folder receives
 echo   rules NAME     Show one rule set
+echo   rules-export [DIR]  Write the rules of a project into its folder, hidden from Git
+echo   rules-pull     Bring rule sets that were changed in the hub into this repository
 echo   hooks-install  Make Claude Code sessions fetch their rules from the hub
 echo   hooks-remove   Undo hooks-install
+echo   mcp-install    Give Cowork the hub tools through the Claude desktop app
+echo   mcp-remove     Undo mcp-install
 echo.
 echo Inside WSL on this machine:
 echo   wsl-setup      Install or update the collector inside WSL
@@ -97,6 +105,26 @@ if "%~1"=="" (
 ) else (
     "%PY%" -m claude_hub.collector.cli rules show %~1
 )
+goto end
+
+:rules_export
+if "%~1"=="" (
+    "%PY%" -m claude_hub.collector.cli rules export
+) else (
+    "%PY%" -m claude_hub.collector.cli rules export "%~1"
+)
+goto end
+
+:rules_pull
+"%PY%" -m claude_hub.collector.cli rules pull "%REPO%rulesets"
+goto end
+
+:mcp_install
+"%PY%" -m claude_hub.collector.cli mcp install
+goto end
+
+:mcp_remove
+"%PY%" -m claude_hub.collector.cli mcp install --remove
 goto end
 
 :hooks_install

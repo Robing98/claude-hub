@@ -18,6 +18,7 @@ from .config import Config
 from .gitscan import resolve_dir
 
 PLACEHOLDER = "{{RULES_COMMAND}}"
+HUB_PLACEHOLDER = "{{HUB_COMMAND}}"
 HOOK_MARKER = "claude_hub.collector.cli"
 # A session start must not hang on a server that does not answer.
 TIMEOUT = 4.0
@@ -55,8 +56,9 @@ def fetch_briefing(cfg: Config, cache_dir: Path, cwd: str) -> tuple[str, bool]:
     """Return (text, from_cache) for a session in ``cwd``."""
     info = resolve_dir(cwd)
     cache = _cache_file(cache_dir, "briefing:" + (info["remote"] or os.path.normcase(cwd)))
+    # v=2 tells the hub that this collector can fill in the propose command.
     query = urlencode({"cwd": cwd, "remote": info["remote"] or "",
-                       "repo_root": info["repo_root"] or ""})
+                       "repo_root": info["repo_root"] or "", "v": 2})
     try:
         _, answer = Client(cfg.server_url, cfg.token, timeout=TIMEOUT).request(
             "GET", f"/api/v1/briefing?{query}")
@@ -86,6 +88,35 @@ def fetch_ruleset(cfg: Config, cache_dir: Path, name: str) -> tuple[str | None, 
     text = f"# {answer['title']}\n\n{answer['body']}\n"
     _write_cache(cache, text)
     return text, "fresh"
+
+
+def fill_commands(text: str, config_path: Path | None) -> str:
+    """Put the commands that work on this machine into a briefing."""
+    command = rules_command(config_path)
+    return text.replace(PLACEHOLDER, command + " rules show").replace(HUB_PLACEHOLDER, command)
+
+
+def where(folder: str) -> dict[str, str]:
+    """What the hub needs to find the project of a folder."""
+    info = resolve_dir(folder)
+    return {"cwd": folder, "remote": info["remote"] or "", "repo_root": info["repo_root"] or ""}
+
+
+def propose(cfg: Config, folder: str, ruleset: str, text: str, reason: str = "",
+            mode: str = "add", source: str = "") -> tuple[bool, str]:
+    """File a rule proposal. Returns (filed, message for the agent)."""
+    body = {"ruleset": ruleset, "text": text, "reason": reason, "mode": mode, "source": source,
+            **where(folder)}
+    try:
+        status, answer = Client(cfg.server_url, cfg.token, timeout=15).request(
+            "POST", "/api/v1/proposals", body, accept=(400, 404, 422))
+    except HubError as exc:
+        return False, f"The proposal was not filed: {exc}"
+    if status != 201:
+        detail = answer.get("detail") if isinstance(answer, dict) else answer
+        return False, f"The hub refused the proposal: {detail}"
+    return True, (f"Proposal {answer['id']} is filed for the set '{ruleset}'. "
+                  "It changes nothing until Robin accepts it in the hub.")
 
 
 def emit(text: str) -> None:

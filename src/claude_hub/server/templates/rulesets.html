@@ -4,6 +4,8 @@
 {% block main %}
 <h1>Rule sets</h1>
 <p class="lead">What Claude Code sessions receive from the hub, in the projects where you turned that on. Each set is one file in <span class="mono">{{ folder }}</span>. A set marked "always" is part of every session start. The others appear as one index line and load on demand.</p>
+{% if nav.proposal_count %}<p class="notice"><a href="/proposals">{{ nav.proposal_count }} rule proposal{{ "s" if nav.proposal_count != 1 else "" }} wait{{ "s" if nav.proposal_count == 1 else "" }} for your decision.</a></p>
+{% else %}<p class="hint"><a href="/proposals">Rule proposals</a>: none open.</p>{% endif %}
 <p class="hint"><a href="/rules">Imported instruction files: {{ imported }}</a>. These are the files found on your machines, kept as the source for consolidation.</p>
 
 <div class="tablewrap">
@@ -12,7 +14,7 @@
   <tbody>
   {% for rs in rulesets %}
     <tr>
-      <td><a href="/rulesets/{{ rs.name }}">{{ rs.title }}</a><div class="sub mono">{{ rs.name }}</div>
+      <td><a href="/rulesets/{{ rs.name }}">{{ rs.title }}</a>{% if rs.edited %} <span class="pill dirty">changed in the hub</span>{% endif %}<div class="sub mono">{{ rs.name }}</div>
           {% if rs.description %}<div class="sub">{{ rs.description }}</div>{% endif %}</td>
       <td><span class="pill {{ 'active' if rs.load == 'always' else '' }}">{{ rs.load }}</span>
           {% if rs.when %}<div class="sub">{{ rs.when }}</div>{% endif %}</td>

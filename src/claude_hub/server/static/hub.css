@@ -174,3 +174,4 @@ pre.result { background: var(--rule-soft); }
 .bar.wide { height: .55rem; min-width: 10rem; margin-top: .35rem; }
 details.box summary { cursor: pointer; font-weight: 600; }
 button:disabled { opacity: .4; cursor: default; }
+textarea { width: 100%; max-width: 60rem; font-family: var(--mono); font-size: .85rem; padding: .5rem .6rem; border: 1px solid var(--rule); border-radius: 4px; background: var(--surface); color: var(--ink); }

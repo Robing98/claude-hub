@@ -11,7 +11,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from . import briefing
+from . import briefing, export, mcp_server
 from . import config as config_module
 from .client import Client, HubError
 from .gitscan import build_inventory
@@ -60,6 +60,15 @@ def run_once(cfg: config_module.Config, sessions: bool = True, inventory: bool =
             ]
             _, answer = client.request("PUT", "/api/v1/rules", {"sources": sources})
             log(f"instruction files: {answer['files']} files, {answer['items']} rules")
+
+        # Keep rule exports current. Only folders that "rules export" created
+        # are written, so a collector run never adds files to a repository.
+        for repo in repos:
+            folder = Path(repo["path"])
+            if export.is_exported(folder):
+                changed, message = export.export_rules(cfg, folder)
+                if changed:
+                    log(f"rule export refreshed: {message}")
     log(f"done, reported as machine '{hello['machine']}'")
 
 
@@ -132,8 +141,7 @@ def cmd_hook(args: argparse.Namespace) -> int:
         cfg = config_module.load(args.config)
         text, cached = briefing.fetch_briefing(cfg, _cache_dir(args), cwd)
         if text:
-            text = text.replace(briefing.PLACEHOLDER,
-                                briefing.rules_command(_custom_config(args)) + " rules show")
+            text = briefing.fill_commands(text, _custom_config(args))
             if cached:
                 text += "\n(The hub was not reachable. These rules are the last saved copy.)\n"
             briefing.emit(text)
@@ -162,8 +170,64 @@ def cmd_rules_list(args: argparse.Namespace) -> int:
     if not text:
         print("No rule set applies here, or the hub is not reachable.")
         return 0
-    briefing.emit(text.replace(briefing.PLACEHOLDER,
-                               briefing.rules_command(_custom_config(args)) + " rules show"))
+    briefing.emit(briefing.fill_commands(text, _custom_config(args)))
+    return 0
+
+
+def cmd_rules_propose(args: argparse.Namespace) -> int:
+    cfg = config_module.load(args.config)
+    filed, message = briefing.propose(cfg, os.getcwd(), args.ruleset, args.text, args.reason,
+                                      "replace" if args.replace else "add", args.source)
+    print(message, file=sys.stdout if filed else sys.stderr)
+    return 0 if filed else 1
+
+
+def cmd_rules_export(args: argparse.Namespace) -> int:
+    cfg = config_module.load(args.config)
+    folder = Path(args.folder or os.getcwd()).resolve()
+    if not folder.is_dir():
+        print(f"{folder} is not a folder.", file=sys.stderr)
+        return 1
+    changed, message = export.export_rules(cfg, folder)
+    print(message)
+    return 0 if export.is_exported(folder) else 1
+
+
+def cmd_rules_pull(args: argparse.Namespace) -> int:
+    """Bring rule sets that were changed in the hub into the repository folder."""
+    cfg = config_module.load(args.config)
+    folder = Path(args.folder).resolve()
+    if not (folder / "README.md").is_file():
+        print(f"{folder} does not look like the rulesets folder of the hub repository.",
+              file=sys.stderr)
+        return 1
+    try:
+        _, answer = Client(cfg.server_url, cfg.token, timeout=30).request(
+            "GET", "/api/v1/ruleset-edits")
+    except HubError as exc:
+        print(f"Failed: {exc}", file=sys.stderr)
+        return 1
+    for name, text in sorted(answer["sets"].items()):
+        if "/" in name or "\\" in name or ".." in name:
+            continue
+        (folder / f"{name}.md").write_text(text, encoding="utf-8", newline="\n")
+        print(f"Updated {name}.md")
+    if not answer["sets"]:
+        print("The repository already holds every rule set as the hub delivers it.")
+    else:
+        print("Review the changes, then commit and deploy.")
+    return 0
+
+
+def cmd_mcp(args: argparse.Namespace) -> int:
+    cfg = config_module.load(args.config)
+    mcp_server.serve(cfg, _cache_dir(args))
+    return 0
+
+
+def cmd_mcp_install(args: argparse.Namespace) -> int:
+    path = args.desktop_config or mcp_server.desktop_config_path()
+    print(mcp_server.install(path, _custom_config(args), remove=args.remove))
     return 0
 
 
@@ -205,6 +269,32 @@ def main(argv: list[str] | None = None) -> int:
     show.set_defaults(func=cmd_rules_show)
     rules_sub.add_parser("list", help="Print what a session in this folder receives").set_defaults(
         func=cmd_rules_list)
+    propose = rules_sub.add_parser("propose", help="Propose a rule change to the hub")
+    propose.add_argument("ruleset", help="Name of the rule set")
+    propose.add_argument("text", help="The rule, as it should appear in the set")
+    propose.add_argument("--reason", default="", help="Why the change is needed")
+    propose.add_argument("--replace", action="store_true",
+                         help="The text replaces the whole set instead of adding to it")
+    propose.add_argument("--source", default="Claude Code", help="Who proposes")
+    propose.set_defaults(func=cmd_rules_propose)
+    export_cmd = rules_sub.add_parser(
+        "export", help="Write the rules of a project into its folder, hidden from Git")
+    export_cmd.add_argument("folder", nargs="?", help="Project folder. Default: this folder.")
+    export_cmd.set_defaults(func=cmd_rules_export)
+    pull = rules_sub.add_parser(
+        "pull", help="Write rule sets that were changed in the hub into the repository")
+    pull.add_argument("folder", nargs="?", default="rulesets",
+                      help="The rulesets folder of the hub repository. Default: ./rulesets")
+    pull.set_defaults(func=cmd_rules_pull)
+
+    mcp = sub.add_parser("mcp", help="Run as a local MCP server for the Claude desktop app")
+    mcp.set_defaults(func=cmd_mcp)
+    mcp_sub = mcp.add_subparsers(dest="mcp_command")
+    mcp_install = mcp_sub.add_parser("install", help="Add this server to the Claude desktop app")
+    mcp_install.add_argument("--remove", action="store_true", help="Remove the entry instead")
+    mcp_install.add_argument("--desktop-config", type=Path, default=None,
+                             help="Path to claude_desktop_config.json, if it is not the default")
+    mcp_install.set_defaults(func=cmd_mcp_install)
 
     hooks = sub.add_parser("hooks", help="Manage the Claude Code hook")
     hooks_sub = hooks.add_subparsers(dest="hooks_command", required=True)

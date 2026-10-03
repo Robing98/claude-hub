@@ -234,8 +234,28 @@ CREATE TABLE project_aliases (
 );
 """
 
+# Rule changes that a session proposes. Nothing changes until the person
+# accepts a proposal in the hub.
+PROPOSALS_SCHEMA = """
+CREATE TABLE rule_proposals (
+    id INTEGER PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    machine_id INTEGER REFERENCES machines(id) ON DELETE SET NULL,
+    project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+    ruleset TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    text TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending',
+    decided_at TEXT,
+    applied_text TEXT
+);
+CREATE INDEX rule_proposals_status ON rule_proposals(status);
+"""
+
 MIGRATIONS = [SCHEMA, RULES_SCHEMA, WORK_DIRS_SCHEMA, AI_SWITCH_SCHEMA, HUB_RULES_SCHEMA,
-              USAGE_SCHEMA, ORGANIZE_SCHEMA]
+              USAGE_SCHEMA, ORGANIZE_SCHEMA, PROPOSALS_SCHEMA]
 
 
 def init(data_dir: Path) -> None:

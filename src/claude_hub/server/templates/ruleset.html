@@ -3,9 +3,26 @@
 {% block title %}{{ ruleset.title }} · Claude hub{% endblock %}
 {% block main %}
 <p class="crumbs"><a href="/rulesets">Rule sets</a></p>
-<h1>{{ ruleset.title }}</h1>
+<h1>{{ ruleset.title }}{% if ruleset.edited %} <span class="pill dirty">changed in the hub</span>{% endif %}</h1>
 <p class="sub"><span class="mono">{{ ruleset.name }}.md</span> · {{ ruleset.load }} · applies to {{ ruleset.scope }} · about {{ ruleset.tokens }} tokens</p>
 {% if ruleset.description %}<p class="lead">{{ ruleset.description }}</p>{% endif %}
 {% if ruleset.when %}<p class="hint">Load when: {{ ruleset.when }}</p>{% endif %}
+{% if ruleset.edited %}
+<p class="notice">This set differs from the file in the repository. Sessions already get this version. To bring it into the repository, run "hub rules-pull" in the hub repository, then ship.</p>
+{% endif %}
 <div class="turns"><article class="turn"><div class="text">{{ ruleset.body }}</div></article></div>
+
+<section>
+  <h2>Edit</h2>
+  <p class="hint">The whole file, with its header. A saved change applies from the next session start, without a deployment.</p>
+  <form method="post" action="/rulesets/{{ ruleset.name }}/edit">
+    <textarea name="text" rows="{{ [ruleset.text.count("\n") + 3, 40] | min }}" aria-label="File text of {{ ruleset.name }}" spellcheck="false">{{ ruleset.text }}</textarea>
+    <div class="toolbar"><button type="submit">Save</button></div>
+  </form>
+  {% if ruleset.edited and ruleset.in_repo %}
+  <form method="post" action="/rulesets/{{ ruleset.name }}/reset" class="inline">
+    <button type="submit" class="quiet">Discard the change and return to the repository version</button>
+  </form>
+  {% endif %}
+</section>
 {% endblock %}

@@ -5,6 +5,7 @@
 {% block main %}
 <h1>Now</h1>
 <p class="lead">Sessions from the last {{ recent_days }} days and in-flight work that needs a decision.</p>
+{% if nav.proposal_count %}<p class="notice"><a href="/proposals">{{ nav.proposal_count }} rule proposal{{ "s" if nav.proposal_count != 1 else "" }} wait{{ "s" if nav.proposal_count == 1 else "" }} for your decision.</a></p>{% endif %}
 
 <section>
   <h2>Waiting for you <span class="count">{{ groups.waiting | length }}</span></h2>

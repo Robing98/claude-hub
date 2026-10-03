@@ -100,6 +100,9 @@ This command has not been verified on Windows yet. Repositories inside WSL need 
 | `hub token NAME` | Create the token for the machine `NAME` |
 | `hub ship "TEXT"` | Commit with the message `TEXT`, push, and deploy |
 | `hub deploy` | Install the last commit on the server |
+| `hub rules-export [DIR]` | Write the rules of a project into its folder, hidden from Git |
+| `hub rules-pull` | Bring rule sets that were changed in the hub into `rulesets/` |
+| `hub mcp-install` | Give Cowork the hub tools through the Claude desktop app |
 
 The server address and the container ID are set at the top of `hub.bat`.
 
@@ -114,6 +117,31 @@ The server address and the container ID are set at the top of `hub.bat`.
 The **Rules** page lists all sets with their size and shows, per project, how much a session carries at its start.
 
 Old `CLAUDE.md` files can stay on disk. To stop Claude Code from loading them as well, add them to `claudeMdExcludes` in the Claude Code settings.
+
+### Change a rule
+
+- **Edit in the hub:** Open a set on the **Rules** page and change the file text under **Edit**. The change applies from the next session start, without a deployment.
+- **Proposals:** A session cannot change a rule. It proposes the change, and you accept or reject it under **Rules** > **Rule proposals**. You can change the wording before you accept. A Claude Code session proposes with `rules propose`, a Cowork session with the tool `hub_propose_rule`.
+- **Back into the repository:** A set that was changed in the hub is marked "changed in the hub". Run `hub rules-pull`, review the files in `rulesets/`, and ship. After that deployment the mark is gone.
+
+### Rules for Cowork
+
+Cowork cannot run the session hook. It gets the rules through a local connector that the Claude desktop app starts.
+
+1. Run `hub mcp-install`. The command adds the entry `claude-hub` to `claude_desktop_config.json` of the desktop app and keeps a backup beside it. `hub mcp-remove` undoes it.
+2. Quit the Claude desktop app completely and start it again.
+3. In a Cowork chat, the tools `hub_rules`, `hub_ruleset`, and `hub_propose_rule` are available. The connector tells the chat to call `hub_rules` with the project folder before it works there.
+
+The connector runs on your computer, so it reaches the hub only while that computer reaches it.
+
+### Rules as files, outside Git
+
+For a tool that has neither the hook nor the connector, export the rules into the project folder:
+
+1. Turn on **Sessions get their rules from the hub** for the project.
+2. Run `hub rules-export DIR`, where `DIR` is the project folder. Without `DIR`, the command uses the current folder.
+
+The command writes `.claude-hub/RULES.md` and one file per on-demand set under `.claude-hub/rules/`. It adds `/.claude-hub/` to `.git/info/exclude`, which is local to your clone, so the repository shows no trace of the export. Every collector run refreshes an export that exists. A linked worktree needs its own export.
 
 ## Sort by hand
 

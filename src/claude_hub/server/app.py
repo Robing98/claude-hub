@@ -12,7 +12,15 @@ from fastapi.responses import PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .. import __version__
+from ..rulesets import read_folder
 from . import db, ingest, views
+
+
+def drop_shipped_edits(shipped: Path, live: Path) -> None:
+    """Remove live rule sets that the repository now holds with the same text."""
+    for name, text in read_folder(live).items():
+        if read_folder(shipped).get(name) == text:
+            (live / f"{name}.md").unlink(missing_ok=True)
 
 
 def create_app(data_dir: str | Path | None = None) -> FastAPI:
@@ -23,6 +31,10 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     app.state.data_dir = data_path
     rulesets = os.environ.get("HUB_RULESETS_DIR")
     app.state.rulesets_dir = Path(rulesets).resolve() if rulesets else Path.cwd() / "rulesets"
+    # Rule sets that were changed in the hub. They win over the repository
+    # files until a deployment brings the same text.
+    app.state.live_rulesets_dir = data_path / "rulesets"
+    drop_shipped_edits(app.state.rulesets_dir, app.state.live_rulesets_dir)
     pricing = os.environ.get("HUB_PRICING_FILE")
     app.state.pricing_file = Path(pricing).resolve() if pricing else Path.cwd() / "pricing.toml"
     app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")

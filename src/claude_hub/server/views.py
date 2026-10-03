@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import sqlite3
 from collections import Counter
 from datetime import timedelta
@@ -14,11 +15,12 @@ from fastapi.templating import Jinja2Templates
 
 from ..remote import is_within
 from ..rules import FILE_NAMED_KINDS
-from ..rulesets import applies, build_briefing, load_rulesets
+from ..rulesets import applies, build_briefing, parse_ruleset, split_file, valid_name, with_addition, with_body
 from ..transcript import iter_turns
 from . import projects as project_rules
 from . import store, usage
-from .ingest import get_conn, project_view
+from .db import now_iso as now_stamp
+from .ingest import current_rulesets, get_conn, project_view
 from .pricing import load_prices
 from .status import (
     ACTION_STATES,
@@ -205,7 +207,9 @@ def parse_target(conn: sqlite3.Connection, target: str) -> tuple[int | None, int
 def nav(conn: sqlite3.Connection) -> dict[str, Any]:
     inbox = conn.execute(
         "SELECT COUNT(*) FROM projects WHERE workspace_id IS NULL AND archived = 0").fetchone()[0]
-    return {"inbox_count": inbox}
+    proposals = conn.execute(
+        "SELECT COUNT(*) FROM rule_proposals WHERE status = 'pending'").fetchone()[0]
+    return {"inbox_count": inbox, "proposal_count": proposals}
 
 
 def render(request: Request, conn: sqlite3.Connection, name: str, **context: Any):
@@ -270,9 +274,15 @@ def status_json(conn: sqlite3.Connection = Depends(get_conn)) -> dict[str, Any]:
                         for s in listed[:3])
     if len(detail) > STATUS_DETAIL_LENGTH:
         detail = detail[:STATUS_DETAIL_LENGTH - 1].rstrip() + "…"
+    proposals = conn.execute(
+        "SELECT COUNT(*) FROM rule_proposals WHERE status = 'pending'").fetchone()[0]
+    if proposals:
+        headline = ", ".join(part for part in (
+            headline, f"{proposals} rule proposal{'s' if proposals != 1 else ''}") if part)
     return {
         **{name: len(items) for name, items in groups.items()},
         "active": len(listed),
+        "proposals": proposals,
         "headline": headline or "Nothing open",
         "detail": detail,
         "sessions": [{"status": s["status"], "project": s["project_name"], "title": s["title"],
@@ -349,7 +359,7 @@ def project_page(project_id: int, request: Request, conn: sqlite3.Connection = D
         current = str(project["workspace_id"])
         if project["class_id"]:
             current += f":{project['class_id']}"
-    rulesets = load_rulesets(request.app.state.rulesets_dir)
+    rulesets = current_rulesets(request.app)
     view = project_view(conn, project_id)
     mine = [rs for rs in rulesets if applies(rs, view)]
     briefing = build_briefing(rulesets, view)
@@ -526,7 +536,7 @@ def rule_file_page(file_id: int, request: Request, conn: sqlite3.Connection = De
 
 @router.get("/rulesets")
 def rulesets_page(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
-    rulesets = load_rulesets(request.app.state.rulesets_dir)
+    rulesets = current_rulesets(request.app)
     imported = conn.execute("SELECT COUNT(*) FROM rule_files").fetchone()[0]
     rows = []
     for row in conn.execute(
@@ -546,7 +556,7 @@ def rulesets_page(request: Request, conn: sqlite3.Connection = Depends(get_conn)
 
 @router.get("/rulesets/{name}")
 def ruleset_page(name: str, request: Request, conn: sqlite3.Connection = Depends(get_conn)):
-    ruleset = next((rs for rs in load_rulesets(request.app.state.rulesets_dir)
+    ruleset = next((rs for rs in current_rulesets(request.app)
                     if rs.name == name), None)
     if ruleset is None:
         raise HTTPException(404, "Unknown rule set")
@@ -559,7 +569,7 @@ def project_briefing_page(project_id: int, request: Request,
     project = project_view(conn, project_id)
     if project is None:
         raise HTTPException(404, "Unknown project")
-    briefing = build_briefing(load_rulesets(request.app.state.rulesets_dir), project)
+    briefing = build_briefing(current_rulesets(request.app), project)
     return render(request, conn, "briefing.html", project=project, briefing=briefing)
 
 
@@ -728,3 +738,108 @@ def move_session(pk: int, request: Request, project: str = Form(""),
     conn.execute("UPDATE sessions SET project_id = ?, project_manual = 1 WHERE pk = ?",
                  (project_id, pk))
     return back(request, conn, f"/sessions/{pk}")
+
+
+# --- rule sets: edits and proposals ----------------------------------------
+
+
+def save_live_ruleset(request: Request, name: str, text: str) -> None:
+    """Store a rule set in the hub. It applies from the next session start."""
+    if not valid_name(name):
+        raise HTTPException(400, "Invalid rule set name")
+    folder: Path = request.app.state.live_rulesets_dir
+    folder.mkdir(parents=True, exist_ok=True)
+    text = text.replace("\r\n", "\n").strip() + "\n"
+    (folder / f"{name}.md").write_text(text, encoding="utf-8", newline="\n")
+
+
+def find_ruleset(request: Request, name: str):
+    return next((rs for rs in current_rulesets(request.app) if rs.name == name), None)
+
+
+def proposal_result(ruleset, mode: str, text: str) -> str:
+    """The file that a rule set becomes when a proposal is accepted."""
+    return with_body(ruleset.text, text) if mode == "replace" else with_addition(ruleset.text, text)
+
+
+def load_proposals(conn: sqlite3.Connection, request: Request, status: str) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """SELECT r.*, m.name AS machine, p.name AS project_name FROM rule_proposals r
+           LEFT JOIN machines m ON m.id = r.machine_id
+           LEFT JOIN projects p ON p.id = r.project_id
+           WHERE (r.status = 'pending') = ? ORDER BY r.created_at DESC LIMIT 200""",
+        (status == "pending",),
+    ).fetchall()
+    sets = {rs.name: rs for rs in current_rulesets(request.app)}
+    result = []
+    for row in rows:
+        item = dict(row)
+        ruleset = sets.get(row["ruleset"])
+        item["title"] = ruleset.title if ruleset else row["ruleset"]
+        item["missing"] = ruleset is None
+        item["diff"] = ""
+        if ruleset and row["mode"] == "replace" and row["status"] == "pending":
+            # A replacement is hard to judge as a whole, so the page shows what changes.
+            item["diff"] = "\n".join(difflib.unified_diff(
+                split_file(ruleset.text)[1].strip().splitlines(), row["text"].splitlines(),
+                "now", "proposed", lineterm="", n=2))
+        result.append(item)
+    return result
+
+
+@router.get("/proposals")
+def proposals_page(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    return render(request, conn, "proposals.html",
+                  pending=load_proposals(conn, request, "pending"),
+                  decided=load_proposals(conn, request, "decided"))
+
+
+@router.post("/proposals/{proposal_id}/accept")
+def accept_proposal(proposal_id: int, request: Request, text: str = Form(""),
+                    conn: sqlite3.Connection = Depends(get_conn)):
+    row = conn.execute("SELECT * FROM rule_proposals WHERE id = ? AND status = 'pending'",
+                       (proposal_id,)).fetchone()
+    if row is None:
+        raise HTTPException(404, "Unknown proposal, or it is already decided")
+    ruleset = find_ruleset(request, row["ruleset"])
+    if ruleset is None:
+        raise HTTPException(409, "The rule set of this proposal no longer exists")
+    # The person may have edited the proposed text before accepting it.
+    applied = (text.replace("\r\n", "\n").strip() or row["text"])
+    save_live_ruleset(request, ruleset.name, proposal_result(ruleset, row["mode"], applied))
+    conn.execute(
+        "UPDATE rule_proposals SET status = 'accepted', decided_at = ?, applied_text = ? WHERE id = ?",
+        (now_stamp(), applied, proposal_id))
+    return back(request, conn, "/proposals")
+
+
+@router.post("/proposals/{proposal_id}/reject")
+def reject_proposal(proposal_id: int, request: Request,
+                    conn: sqlite3.Connection = Depends(get_conn)):
+    conn.execute(
+        "UPDATE rule_proposals SET status = 'rejected', decided_at = ? "
+        "WHERE id = ? AND status = 'pending'", (now_stamp(), proposal_id))
+    return back(request, conn, "/proposals")
+
+
+@router.post("/rulesets/{name}/edit")
+def edit_ruleset(name: str, request: Request, text: str = Form(...),
+                 conn: sqlite3.Connection = Depends(get_conn)):
+    if find_ruleset(request, name) is None:
+        raise HTTPException(404, "Unknown rule set")
+    if not text.strip():
+        raise HTTPException(400, "The text is empty")
+    save_live_ruleset(request, name, text)
+    return back(request, conn, f"/rulesets/{name}")
+
+
+@router.post("/rulesets/{name}/reset")
+def reset_ruleset(name: str, request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    """Drop the edit made in the hub and return to the repository version."""
+    ruleset = find_ruleset(request, name)
+    if ruleset is None or not valid_name(name):
+        raise HTTPException(404, "Unknown rule set")
+    if not ruleset.in_repo:
+        raise HTTPException(409, "This rule set exists only in the hub")
+    (request.app.state.live_rulesets_dir / f"{name}.md").unlink(missing_ok=True)
+    return back(request, conn, f"/rulesets/{name}")

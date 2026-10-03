@@ -16,7 +16,8 @@
                     ("settings", "/settings", "Settings")] %}
     {% for key, href, label in pages %}
       <a href="{{ href }}"{% if active == key %} class="on" aria-current="page"{% endif %}>{{ label }}
-        {%- if key == "inbox" and nav.inbox_count %} <span class="count">{{ nav.inbox_count }}</span>{% endif %}</a>
+        {%- if key == "inbox" and nav.inbox_count %} <span class="count">{{ nav.inbox_count }}</span>{% endif %}
+        {%- if key == "rules" and nav.proposal_count %} <span class="count">{{ nav.proposal_count }}</span>{% endif %}</a>
     {% endfor %}
   </nav>
 </header>

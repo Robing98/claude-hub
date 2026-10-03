@@ -155,16 +155,21 @@ Two questions that are independent of each other:
 
 Decided on 2026-10-03: the hub generates the rule file for the lanes that cannot run the hook, and rule files move out of Git.
 
-Next, rules outside Git:
+Built for rules outside Git:
 
-- An export command writes the rules of a project into its folder as a generated file. The file is hidden from Git through `.git/info/exclude`, which stays local and leaves no trace in the repository. This is a write into a working tree, so it is its own command and never part of a collector run.
-- Claude Code skips the generated file through `claudeMdExcludes` and takes the hook briefing, which is smaller.
-- Cowork does not load a `CLAUDE.md` from a connected folder by itself. It needs a pointer: one line in the global instructions, or a skill, that says to read the generated file first. Target: the hub as a local MCP server in the desktop app, so that a Cowork chat fetches rules and loads sets on demand as Claude Code does.
-- Orbis: stop tracking `CLAUDE.md` once the export works. Until then that file wins over the hub sets, because the design lane still edits it.
+- Export: `rules export` writes the rules of a project into `.claude-hub/` in its folder and hides that folder through `.git/info/exclude`, which stays local and leaves no trace in the repository. Claude Code does not load that folder, so the hook briefing stays the only copy it gets. A collector run refreshes an export that exists and never creates one.
+- Local connector: a local MCP server that the Claude desktop app starts. A Cowork chat fetches the rules of a folder, loads sets on demand, and proposes rule changes.
+- Rule proposals: a session proposes, Robin accepts or rejects in the hub, and may change the wording first.
+- Edits in the hub: a set can be edited on its page. Edits and accepted proposals are stored in the data folder of the hub and win over the repository file. `rules pull` brings them into the repository.
+
+Next for Orbis:
+
+- Turn on rules from the hub, export into the Orbis folder, install the connector, and stop tracking `CLAUDE.md`. Until then that file wins over the hub sets, because the design lane still edits it.
+- The Orbis sets are a copy of `CLAUDE.md` from 2026-10-02. Compare them with the file of that day before the switch.
 
 Open:
 
-- How a lane changes a rule when the rules live in the hub. Today the Orbis design lane edits `CLAUDE.md` itself. Candidates: a rule proposal in the decision queue, or rule sets that are edited in the hub with their own history and no deploy.
+- Whether the desktop app passes a server from `claude_desktop_config.json` on to Cowork sessions that run in the cloud. A plugin server on the same computer is passed on. If the configured one is not, package the connector as a plugin.
 - Rule proposals from session outputs: find the corrections that repeat across sessions, and propose a rule for each. Needs the summary step of phase 3.
 - The synchrotron and GolleIT rules are not consolidated yet.
 

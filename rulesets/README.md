@@ -1,6 +1,11 @@
 # Rule sets
 
-Each file in this folder is one rule set. The hub hands the sets to Claude Code sessions through the session hook. A change takes effect with the next deployment.
+Each file in this folder is one rule set. The hub hands the sets to sessions: to Claude Code through the session hook, to Cowork through the local connector, and to other tools through an exported folder.
+
+A set changes in one of two ways:
+
+- **In the hub:** Edit the set on its page, or accept a rule proposal. The change applies from the next session start. Then run `hub rules-pull` here and commit, so that the repository holds the same text.
+- **In this folder:** Edit the file and deploy. Run `hub rules-pull` first. A version that was changed in the hub wins over the file until the repository holds the same text.
 
 ## File format
 
